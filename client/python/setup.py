@@ -13,7 +13,7 @@
 # limitations under the License.
 #
 # -*- coding: utf-8 -*-
-
+import versioneer
 from setuptools import setup, find_namespace_packages
 
 with open("README.md") as readme_file:
@@ -31,7 +31,8 @@ extras_require["dev"] = set(sum(extras_require.values(), []))
 
 setup(
     name="openlineage-python",
-    version="0.5.0",
+    version=versioneer.get_version(),
+    cmdclass=versioneer.get_cmdclass(),
     description="OpenLineage Python Client",
     long_description=readme,
     long_description_content_type="text/markdown",

@@ -64,12 +64,6 @@ readonly SEMVER_REGEX="^[0-9]+(\.[0-9]+){2}((-rc\.[0-9]+)?(-SNAPSHOT)?)$" # X.Y.
 project_root=$(git rev-parse --show-toplevel)
 cd "${project_root}/"
 
-# Verify bump2version is installed
-if [[ ! $(type -P bump2version) ]]; then
-  echo "bump2version not installed! Please see https://github.com/c4urself/bump2version#installation"
-  exit 1;
-fi
-
 if [[ $# -eq 0 ]] ; then
   usage
 fi
@@ -77,14 +71,6 @@ fi
 PUSH="true"
 while [ $# -gt 0 ]; do
   case $1 in
-    -r|--release-version)
-       shift
-       RELEASE_VERSION="${1}"
-       ;;
-    -n|--next-version)
-       shift
-       NEXT_VERSION="${1}"
-       ;;
     -p|--no-push)
        PUSH="false"
        ;;
@@ -109,26 +95,13 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]] ; then
   exit 1;
 fi
 
-# Ensure valid versions
+# (1) Ensure valid versions
 VERSIONS=($RELEASE_VERSION $NEXT_VERSION)
 for VERSION in "${VERSIONS[@]}"; do
   if [[ ! "${VERSION}" =~ ${SEMVER_REGEX} ]]; then
     echo "Error: Version '${VERSION}' must match '${SEMVER_REGEX}'"
     exit 1
   fi
-done
-
-# Ensure python module version matches X.Y.Z or X.Y.ZrcN (see: https://www.python.org/dev/peps/pep-0440/),
-PYTHON_RELEASE_VERSION=${RELEASE_VERSION}
-if [[ "${RELEASE_VERSION}" == *-rc.? ]]; then
-  RELEASE_CANDIDATE=${RELEASE_VERSION##*-}
-  PYTHON_RELEASE_VERSION="${RELEASE_VERSION%-*}${RELEASE_CANDIDATE//.}"
-fi
-
-# (1) Bump python module versions
-PYTHON_MODULES=(client/python/ integration/common/ integration/airflow/ integration/dbt/)
-for PYTHON_MODULE in "${PYTHON_MODULES[@]}"; do
-  (cd "${PYTHON_MODULE}" && bump2version manual --new-version "${PYTHON_RELEASE_VERSION}" --allow-dirty)
 done
 
 # (2) Bump java module versions
@@ -148,11 +121,6 @@ git fetch --all --tags
 git tag -a "${RELEASE_VERSION}" -m "openlineage ${RELEASE_VERSION}"
 
 # (6) Prepare next development version
-PYTHON_MODULES=(client/python/ integration/common/ integration/airflow/ integration/dbt/)
-for PYTHON_MODULE in "${PYTHON_MODULES[@]}"; do
-  (cd "${PYTHON_MODULE}" && bump2version manual --new-version "${NEXT_VERSION}" --allow-dirty)
-done
-
 # Append '-SNAPSHOT' to 'NEXT_VERSION' if a release candidate, or missing
 # (ex: '-SNAPSHOT' will be appended to X.Y.Z or X.Y.Z-rc.N)
 if [[ "${NEXT_VERSION}" == *-rc.? ||
