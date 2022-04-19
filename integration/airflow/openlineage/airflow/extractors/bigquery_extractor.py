@@ -15,7 +15,7 @@ from openlineage.airflow.extractors.base import (
     BaseExtractor,
     TaskMetadata
 )
-from openlineage.airflow.utils import get_job_name
+from openlineage.airflow.utils import get_job_name, safe_import_airflow
 
 _BIGQUERY_CONN_URL = 'bigquery'
 
@@ -64,7 +64,10 @@ class BigQueryExtractor(BaseExtractor):
                 }
             )
 
-        stats = BigQueryDatasetsProvider().get_facets(bigquery_job_id)
+        print(self.operator.__dict__)
+        client = self._get_client()
+
+        stats = BigQueryDatasetsProvider(client=client).get_facets(bigquery_job_id)
         inputs = stats.inputs
         output = stats.output
         run_facets = stats.run_facets
@@ -78,6 +81,27 @@ class BigQueryExtractor(BaseExtractor):
             outputs=[output.to_openlineage_dataset()] if output else [],
             run_facets=run_facets,
             job_facets=job_facets
+        )
+
+    def _get_client(self):
+        # Get client using Airflow hook - this way we use the same credential as Airflow
+        if self.operator.hook:
+            hook = self.operator.hook
+        else:
+            BigQueryHook = safe_import_airflow(
+                airflow_1_path="airflow.contrib.operators.bigquery_operator.BigQueryHook",
+                airflow_2_path='airflow.providers.google.cloud.operators.bigquery.BigQueryHook'
+            )
+            hook = BigQueryHook(
+                gcp_conn_id=self.operator.gcp_conn_id,
+                use_legacy_sql=self.operator.use_legacy_sql,
+                delegate_to=self.operator.delegate_to,
+                location=self.operator.location,
+                impersonation_chain=self.operator.impersonation_chain,
+            )
+        return hook.get_client(
+            project_id=hook.project_id,
+            location=hook.location
         )
 
     def _get_xcom_bigquery_job_id(self, task_instance):

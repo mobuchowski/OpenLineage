@@ -37,8 +37,7 @@ class TestBigQueryExtractorE2E(unittest.TestCase):
         airflow_1_version="airflow.contrib.operators.bigquery_operator.BigQueryHook",
         airflow_2_version='airflow.providers.google.cloud.operators.bigquery.BigQueryHook'
     ))
-    @mock.patch('openlineage.common.provider.bigquery.Client')
-    def test_extract(self, mock_client, mock_hook):
+    def test_extract(self, mock_hook):
         log.info("test_extractor")
 
         job_details = self.read_file_json(
@@ -50,6 +49,8 @@ class TestBigQueryExtractorE2E(unittest.TestCase):
 
         bq_job_id = "foo.bq.job_id"
 
+        mock_client = mock.MagicMock()
+
         mock_hook.return_value \
             .run_query.return_value = bq_job_id
 
@@ -57,6 +58,11 @@ class TestBigQueryExtractorE2E(unittest.TestCase):
             .get_conn.return_value \
             .cursor.return_value \
             .run_query.return_value = bq_job_id
+
+        project_id = "test"
+        mock_hook.return_value.project_id.return_value = project_id
+        mock_hook.return_value.location = "US"
+        mock_hook.get_client.return_value = mock_client
 
         mock_client.return_value \
             .get_job.return_value \
@@ -96,6 +102,11 @@ class TestBigQueryExtractorE2E(unittest.TestCase):
         task_instance.run()
 
         task_meta = bq_extractor.extract_on_complete(task_instance)
+
+        mock_hook.get_client.assert_called_with(
+            project_id=project_id,
+            location="US"
+        )
         mock_client.return_value \
             .get_job.assert_called_once_with(job_id=bq_job_id)
 
