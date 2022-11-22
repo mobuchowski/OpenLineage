@@ -97,7 +97,15 @@ public class PlanUtils {
             .map(
                 pfn -> {
                   try {
-                    return pfn.apply(x);
+                    Collection<D> collection = pfn.apply(x);
+                    if (log.isDebugEnabled()) {
+                      log.debug(
+                          "Visitor {} visited {}, returned {}",
+                          pfn.getClass().getCanonicalName(),
+                          x.getClass().getCanonicalName(),
+                          collection);
+                    }
+                    return collection;
                   } catch (RuntimeException | NoClassDefFoundError | NoSuchMethodError e) {
                     log.error("Apply failed:", e);
                     return null;

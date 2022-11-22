@@ -8,6 +8,7 @@ package io.openlineage.spark.agent.lifecycle.plan;
 import static io.openlineage.client.OpenLineage.LifecycleStateChangeDatasetFacet.LifecycleStateChange.CREATE;
 import static io.openlineage.client.OpenLineage.LifecycleStateChangeDatasetFacet.LifecycleStateChange.OVERWRITE;
 
+import com.google.cloud.spark.bigquery.BigQueryRelation;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMap.Builder;
 import io.openlineage.client.OpenLineage;
@@ -56,6 +57,7 @@ public class SaveIntoDataSourceCommandVisitor
   public boolean isDefinedAtLogicalPlan(LogicalPlan x) {
     return context.getSparkSession().isPresent()
         && x instanceof SaveIntoDataSourceCommand
+        && (!(((SaveIntoDataSourceCommand) x).dataSource() instanceof BigQueryRelation))
         && (((SaveIntoDataSourceCommand) x).dataSource() instanceof SchemaRelationProvider
             || ((SaveIntoDataSourceCommand) x).dataSource() instanceof RelationProvider);
   }

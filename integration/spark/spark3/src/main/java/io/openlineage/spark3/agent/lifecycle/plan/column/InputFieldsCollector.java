@@ -5,6 +5,8 @@
 
 package io.openlineage.spark3.agent.lifecycle.plan.column;
 
+import com.google.cloud.spark.bigquery.BigQueryRelation;
+import com.google.cloud.spark.bigquery.repackaged.com.google.cloud.bigquery.connector.common.BigQueryUtil;
 import io.openlineage.spark.agent.lifecycle.Rdds;
 import io.openlineage.spark.agent.util.DatasetIdentifier;
 import io.openlineage.spark.agent.util.PlanUtils;
@@ -78,6 +80,10 @@ class InputFieldsCollector {
         && (((LogicalRelation) node).relation() instanceof HadoopFsRelation)) {
       HadoopFsRelation relation = (HadoopFsRelation) ((LogicalRelation) node).relation();
       return extractDatasetIdentifier(relation);
+    } else if (node instanceof LogicalRelation
+        && ((LogicalRelation) node).relation() instanceof BigQueryRelation) {
+      BigQueryRelation relation = (BigQueryRelation) ((LogicalRelation) node).relation();
+      return extractDatasetIdentifier(relation);
     } else if (node instanceof LogicalRDD) {
       return extractDatasetIdentifier((LogicalRDD) node);
     } else if (node instanceof LeafNode) {
@@ -100,6 +106,13 @@ class InputFieldsCollector {
     return PlanUtils3.getDatasetIdentifier(context, relation)
         .map(Collections::singletonList)
         .orElse(Collections.emptyList());
+  }
+
+  private static List<DatasetIdentifier> extractDatasetIdentifier(
+      BigQueryRelation bigQueryRelation) {
+    return Collections.singletonList(
+        new DatasetIdentifier(
+            BigQueryUtil.friendlyTableName(bigQueryRelation.tableId()), "namespace"));
   }
 
   private static List<DatasetIdentifier> extractDatasetIdentifier(CatalogTable catalogTable) {

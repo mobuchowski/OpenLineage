@@ -441,6 +441,17 @@ class SparkContainerIntegrationTest {
   }
 
   @Test
+  @EnabledIfSystemProperty(named = SPARK_VERSION, matches = SPARK_3) // Spark version >= 3.*
+  void testReadAndWriteFromBigquery() {
+    SparkContainerUtils.runPysparkContainerWithDefaultConf(
+        network,
+        openLineageClientMockContainer,
+        "testReadAndWriteFromBigquery",
+        "spark_bigquery.py");
+    verifyEvents("pysparkAlterTableAddColumnsEnd.json", "pysparkAlterTableRenameEnd.json");
+  }
+
+  @Test
   @SneakyThrows
   void testFacetsDisable() {
     SparkContainerUtils.runPysparkContainerWithDefaultConf(

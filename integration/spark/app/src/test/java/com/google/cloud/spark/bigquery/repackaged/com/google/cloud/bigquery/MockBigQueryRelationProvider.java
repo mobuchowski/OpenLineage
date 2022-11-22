@@ -5,20 +5,19 @@
 
 package com.google.cloud.spark.bigquery.repackaged.com.google.cloud.bigquery;
 
-import com.google.cloud.bigquery.connector.common.BigQueryClient;
 import com.google.cloud.spark.bigquery.BigQueryRelation;
 import com.google.cloud.spark.bigquery.BigQueryRelationProvider;
 import com.google.cloud.spark.bigquery.DataSourceVersion;
 import com.google.cloud.spark.bigquery.SparkBigQueryConfig;
-import com.google.cloud.spark.bigquery.SparkBigQueryConnectorModule;
-import com.google.cloud.spark.bigquery.repackaged.com.google.cloud.bigquery.common.MockBigQueryClientModule;
+import com.google.cloud.spark.bigquery.repackaged.com.google.cloud.bigquery.connector.common.BigQueryClient;
+import com.google.cloud.spark.bigquery.repackaged.com.google.cloud.bigquery.connector.common.MockBigQueryClientModule;
 import com.google.cloud.spark.bigquery.repackaged.com.google.inject.Binder;
 import com.google.cloud.spark.bigquery.repackaged.com.google.inject.Guice;
 import com.google.cloud.spark.bigquery.repackaged.com.google.inject.Injector;
 import com.google.cloud.spark.bigquery.repackaged.com.google.inject.Key;
 import com.google.cloud.spark.bigquery.repackaged.com.google.inject.Module;
+import com.google.cloud.spark.bigquery.v2.SparkBigQueryConnectorModule;
 import java.math.BigInteger;
-import java.util.Collections;
 import java.util.Optional;
 import org.apache.spark.rdd.RDD;
 import org.apache.spark.sql.Dataset;
@@ -75,6 +74,21 @@ public class MockBigQueryRelationProvider extends BigQueryRelationProvider {
     public RDD<Row> buildScan() {
       return testRecords.rdd();
     }
+
+    @Override
+    public Object productElement(int n) {
+      return null;
+    }
+
+    @Override
+    public int productArity() {
+      return 0;
+    }
+
+    @Override
+    public boolean canEqual(Object that) {
+      return false;
+    }
   }
 
   public static class MockInjector {
@@ -90,7 +104,6 @@ public class MockBigQueryRelationProvider extends BigQueryRelationProvider {
           new SparkBigQueryConnectorModule(
               sparkSession,
               JavaConversions.<String, String>mapAsJavaMap(parameters),
-              Collections.emptyMap(),
               Optional.ofNullable(
                   schema.getOrElse(
                       new AbstractFunction0<StructType>() {
@@ -99,8 +112,7 @@ public class MockBigQueryRelationProvider extends BigQueryRelationProvider {
                           return null;
                         }
                       })),
-              DataSourceVersion.V1,
-              true));
+              DataSourceVersion.V1));
     }
 
     public void setTestModule(Module testModule) {

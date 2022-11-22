@@ -50,7 +50,7 @@ archivesBaseName='openlineage-spark-app'
 
 
 ext {
-    bigqueryVersion = '0.26.0'
+    bigqueryVersion = '0.22.0'
     sparkVersion = project.getProperty('spark.version')
     postgresqlVersion = '42.2.19'
     mockitoVersion = '3.11.2'
@@ -88,7 +88,7 @@ dependencies {
 
     compileOnly "org.apache.spark:spark-core_${versions.scala}:${sparkVersion}"
     compileOnly "org.apache.spark:spark-sql_${versions.scala}:${sparkVersion}"
-    compileOnly ("com.google.cloud.spark:spark-bigquery_${versions.scala}:${bigqueryVersion}") {
+    compileOnly ("com.google.cloud.spark:spark-bigquery-with-dependencies_${versions.scala}:${bigqueryVersion}") {
         exclude group: 'com.fasterxml.jackson.core'
         exclude group: 'com.fasterxml.jackson.module'
         exclude group: 'com.sun.jmx'
