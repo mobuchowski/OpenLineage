@@ -2,6 +2,14 @@
 
 ## [Unreleased](https://github.com/OpenLineage/OpenLineage/compare/0.19.2...HEAD)
 
+### Changed
+* Use ruff tool instead of flake8 [`#1526`](https://github.com/OpenLineage/OpenLineage/pull/1288) [@mobuchowski](https://github.com/mobuchowski)  
+  *All Python code pieces are now formatted by ruff tool, that combines functionality of a lot of other tools in one package*
+
+### Fixed
+* Harmonized Snowflake naming schemes across all Python integrations [#PR num](https://github.com/OpenLineage/OpenLineage/pull/1) [@mobuchowski](https://github.com/mobuchowski)  
+  *This fixes a bug where same dataset would be represented by different name/namespace across different integrations.*
+
 ## [0.19.2](https://github.com/OpenLineage/OpenLineage/compare/0.18.0...0.19.2) - 2023-1-4
 ### Added
 * Airflow: add Trino extractor [`#1288`](https://github.com/OpenLineage/OpenLineage/pull/1288) [@sekikn](https://github.com/sekikn)  

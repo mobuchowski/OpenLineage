@@ -12,7 +12,7 @@
             {
                 "facets": {},
                 "name": "SANDBOX.money_received",
-                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1",
+                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws",
                 "outputFacets": {}
             }
         ]
@@ -30,7 +30,7 @@
             {
                 "facets": {},
                 "name": "SANDBOX.{{ env_var('SNOWFLAKE_ACCOUNT_ID') }}.money_send",
-                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1",
+                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws",
                 "outputFacets": {}
             }
         ]
@@ -41,12 +41,12 @@
             {
                 "facets": {},
                 "name": "SANDBOX.{{ env_var('SNOWFLAKE_ACCOUNT_ID' )}}.us-east-1.money_received",
-                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1"
+                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws"
             },
             {
                 "facets": {},
                 "name": "SANDBOX.{{ env_var('SNOWFLAKE_ACCOUNT_ID' )}}.us-east-1.money_send",
-                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1"
+                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws"
             }
         ],
         "job": {
@@ -58,7 +58,7 @@
             {
                 "facets": {},
                 "name": "SANDBOX.{{ env_var('SNOWFLAKE_ACCOUNT_ID' )}}.us-east-1.balance",
-                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1",
+                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws",
                 "outputFacets": {}
             }
         ]
@@ -87,8 +87,8 @@
             {
                 "facets": {
                     "dataSource": {
-                        "name": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1",
-                        "uri": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1"
+                        "name": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws",
+                        "uri": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws"
                     },
                     "schema": {
                         "fields": [
@@ -105,7 +105,7 @@
                     }
                 },
                 "name": "SANDBOX.{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.money_received",
-                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1",
+                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws",
                 "outputFacets": {}
             }
         ]
@@ -134,8 +134,8 @@
             {
                 "facets": {
                     "dataSource": {
-                        "name": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1",
-                        "uri": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1"
+                        "name": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws",
+                        "uri": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws"
                     },
                     "schema": {
                         "fields": [
@@ -152,7 +152,7 @@
                     }
                 },
                 "name": "SANDBOX.{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.money_send",
-                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1",
+                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws",
                 "outputFacets": {}
             }
         ]
@@ -171,8 +171,8 @@
             {
                 "facets": {
                     "dataSource": {
-                        "name": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1",
-                        "uri": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1"
+                        "name": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws",
+                        "uri": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws"
                     },
                     "schema": {
                         "fields": [
@@ -189,13 +189,13 @@
                     }
                 },
                 "name": "SANDBOX.{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.money_received",
-                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1"
+                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws"
             },
             {
                 "facets": {
                     "dataSource": {
-                        "name": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1",
-                        "uri": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1"
+                        "name": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws",
+                        "uri": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws"
                     },
                     "schema": {
                         "fields": [
@@ -212,7 +212,7 @@
                     }
                 },
                 "name": "SANDBOX.{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.money_send",
-                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1"
+                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws"
             }
         ],
         "job": {
@@ -228,8 +228,8 @@
             {
                 "facets": {
                     "dataSource": {
-                        "name": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1",
-                        "uri": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1"
+                        "name": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws",
+                        "uri": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws"
                     },
                     "schema": {
                         "fields": [
@@ -246,7 +246,7 @@
                     }
                 },
                 "name": "SANDBOX.{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.balance",
-                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1",
+                "namespace": "snowflake://{{ env_var('SNOWFLAKE_ACCOUNT_ID')}}.us-east-1.aws",
                 "outputFacets": {}
             }
         ]
