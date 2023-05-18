@@ -6,6 +6,7 @@ import typing
 from typing import Optional
 
 import attr
+import attrs
 
 from openlineage.client.serde import Serde
 
@@ -13,20 +14,27 @@ if typing.TYPE_CHECKING:
     from requests import Session
     from requests.adapters import HTTPAdapter
 
+from typing import List
+
 from openlineage.client.run import RunEvent
 from openlineage.client.transport import Transport, get_default_factory
 from openlineage.client.transport.http import HttpConfig, HttpTransport
 
 
-@attr.s
+@attrs.define
 class OpenLineageClientOptions:
-    timeout: float = attr.ib(default=5.0)
-    verify: bool = attr.ib(default=True)
-    api_key: str = attr.ib(default=None)
-    adapter: "HTTPAdapter" = attr.ib(default=None)
+    timeout: float = attrs.field(default=5.0)
+    verify: bool = attrs.field(default=True)
+    api_key: str = attrs.field(default=None)
+    adapter: "HTTPAdapter" = attrs.field(default=None)
 
 
 log = logging.getLogger(__name__)
+
+
+@attrs.define
+class Filter:
+    
 
 
 class OpenLineageClient:
@@ -68,12 +76,18 @@ class OpenLineageClient:
             raise ValueError("`emit` only accepts RunEvent class")
         if not self.transport:
             log.error("Tried to emit OpenLineage event, but transport is not configured.")
+            return
         else:
             if log.isEnabledFor(logging.DEBUG):
                 log.debug(
                     f"OpenLineageClient will emit event {Serde.to_json(event).encode('utf-8')}"
                 )
+        event = self.filter_event(self.transport.filter, event)
+        if event:
             self.transport.emit(event)
+
+    def filter_event(self, filters: List[Filter], event: RunEvent):
+        for filter
 
     @classmethod
     def from_environment(cls):

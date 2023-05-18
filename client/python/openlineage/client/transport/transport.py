@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from typing import Optional, Type
 
+import attrs
+
 from openlineage.client.run import RunEvent
 
 """
@@ -21,7 +23,9 @@ class config.
 """
 
 
+@attrs.define
 class Config:
+    filter: JobFilter = attr.s
     @classmethod
     def from_dict(cls, params: dict):
         return cls()
