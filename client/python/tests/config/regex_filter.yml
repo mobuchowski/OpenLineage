@@ -1,0 +1,3 @@
+filters:
+  - type: regex
+    regex: ^.*whatever.*$

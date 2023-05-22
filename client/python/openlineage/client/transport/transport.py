@@ -25,7 +25,6 @@ class config.
 
 @attrs.define
 class Config:
-    filter: JobFilter = attr.s
     @classmethod
     def from_dict(cls, params: dict):
         return cls()

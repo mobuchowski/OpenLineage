@@ -2,22 +2,22 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+import re
 import typing
 from typing import Optional
 
-import attr
 import attrs
 
+from openlineage.client.filter import create_filter
 from openlineage.client.serde import Serde
+from openlineage.client.utils import load_config
 
 if typing.TYPE_CHECKING:
     from requests import Session
     from requests.adapters import HTTPAdapter
 
-from typing import List
-
 from openlineage.client.run import RunEvent
-from openlineage.client.transport import Transport, get_default_factory
+from openlineage.client.transport import Transport, get_default_factory, TransportFactory
 from openlineage.client.transport.http import HttpConfig, HttpTransport
 
 
@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 
 @attrs.define
 class Filter:
-    
+    pass
 
 
 class OpenLineageClient:
@@ -44,7 +44,10 @@ class OpenLineageClient:
         options: Optional[OpenLineageClientOptions] = None,
         session: Optional["Session"] = None,
         transport: Optional[Transport] = None,
+        factory: TransportFactory = get_default_factory()
     ):
+        # Make config ellipsis - as a guard value to not try to reload yaml each time config is referred to.
+        self._config = None
         if url:
             # Backwards compatibility: if URL or options is set, use old path to initialize
             # HTTP transport.
@@ -57,7 +60,16 @@ class OpenLineageClient:
         elif transport:
             self.transport = transport
         else:
-            self.transport = get_default_factory().create()
+            transport_config = None if 'transport' not in self.config else self.config['transport']
+            self.transport = factory.create(transport_config)
+
+        self._filters = []
+        print(self.config)
+        if 'filters' in self.config:
+            for filter in self.config['filters']:
+                filter = create_filter(filter)
+                if filter:
+                    self._filters.append(filter)
 
     def _initialize_url(
         self,
@@ -82,17 +94,30 @@ class OpenLineageClient:
                 log.debug(
                     f"OpenLineageClient will emit event {Serde.to_json(event).encode('utf-8')}"
                 )
-        event = self.filter_event(self.transport.filter, event)
+        print("????")
+        print(event)
+        print(self._filters)
+        print("????")
+        if self._filters:
+            event = self.filter_event(event)
+            print(event)
         if event:
             self.transport.emit(event)
 
-    def filter_event(self, filters: List[Filter], event: RunEvent):
-        for filter
+    def filter_event(self, event: RunEvent) -> Optional[RunEvent]:
+        """Filters jobs according to config-defined events"""
+        for filter in self._filters:
+            if filter.filter(event) is None:
+                return None
+        return event
+
+    @property
+    def config(self) -> dict:
+        if self._config is None:
+            self._config = load_config()
+        return self._config
 
     @classmethod
     def from_environment(cls):
-        return cls(transport=get_default_factory().create())
+        return cls()
 
-    @classmethod
-    def from_dict(cls, config: dict):
-        return cls(transport=get_default_factory().create(config=config))

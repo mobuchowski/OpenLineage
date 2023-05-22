@@ -4,9 +4,12 @@
 import importlib
 import inspect
 import logging
-from typing import List, Type
+import os
+from collections import defaultdict
+from typing import List, Type, Optional
 
 import attr
+import yaml
 
 log = logging.getLogger(__name__)
 
@@ -52,3 +55,52 @@ class RedactMixin:
     @property
     def skip_redact(self) -> List[str]:
         return self._skip_redact
+
+
+def load_config() -> dict:
+    print("load_config")
+    file = _find_yaml()
+    if file:
+        try:
+            with open(file, 'r') as f:
+                config = yaml.safe_load(f)
+                print(config)
+                return config
+        except Exception:
+            # Just move to read env vars
+            pass
+    print(file)
+    return defaultdict(dict)
+
+
+def _find_yaml() -> Optional[str]:
+    # Check OPENLINEAGE_CONFIG env variable
+    path = os.getenv('OPENLINEAGE_CONFIG', None)
+    try:
+        if path and os.path.isfile(path) and os.access(path, os.R_OK):
+            return path
+    except Exception:
+        if path:
+            log.exception(f"Couldn't read file {path}: ")
+        else:
+            # We can get different errors depending on system
+            pass
+
+    # Check current working directory:
+    try:
+        cwd = os.getcwd()
+        if 'openlineage.yml' in os.listdir(cwd):
+            return os.path.join(cwd, 'openlineage.yml')
+    except Exception:
+        # We can get different errors depending on system
+        pass
+
+    # Check $HOME/.openlineage dir
+    try:
+        path = os.path.expanduser("~/.openlineage")
+        if 'openlineage.yml' in os.listdir(path):
+            return os.path.join(path, 'openlineage.yml')
+    except Exception:
+        # We can get different errors depending on system
+        pass
+    return None

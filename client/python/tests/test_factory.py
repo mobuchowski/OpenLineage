@@ -26,7 +26,7 @@ def test_client_uses_default_http_factory():
     assert client.transport.url == "http://mock-url:5000"
 
 
-@patch('openlineage.client.transport.factory.yaml')
+@patch('openlineage.client.utils.yaml')
 @patch('os.listdir')
 @patch('os.path.join')
 def test_factory_registers_new_transports(join, listdir, yaml):
@@ -35,11 +35,10 @@ def test_factory_registers_new_transports(join, listdir, yaml):
 
     factory = DefaultTransportFactory()
     factory.register_transport("accumulating", clazz=AccumulatingTransport)
-    transport = factory.create()
-    assert isinstance(transport, AccumulatingTransport)
+    assert isinstance(OpenLineageClient(factory=factory).transport, AccumulatingTransport)
 
 
-@patch('openlineage.client.transport.factory.yaml')
+@patch('openlineage.client.utils.yaml')
 @patch('os.listdir')
 @patch('os.path.join')
 def test_factory_registers_transports_from_string(join, listdir, yaml):
@@ -51,8 +50,7 @@ def test_factory_registers_transports_from_string(join, listdir, yaml):
         "accumulating",
         clazz="tests.transport.AccumulatingTransport"
     )
-    transport = factory.create()
-    assert isinstance(transport, AccumulatingTransport)
+    assert isinstance(OpenLineageClient(factory=factory).transport, AccumulatingTransport)
 
 
 @patch.dict(os.environ, {})
@@ -65,8 +63,7 @@ def test_factory_registers_transports_from_yaml(cwd):
         "accumulating",
         clazz="tests.transport.AccumulatingTransport"
     )
-    transport = factory.create()
-    assert isinstance(transport, AccumulatingTransport)
+    assert isinstance(OpenLineageClient(factory=factory).transport, AccumulatingTransport)
 
 
 @patch.dict(os.environ, {"OPENLINEAGE_CONFIG": "tests/config/config.yml"})
@@ -76,14 +73,13 @@ def test_factory_registers_transports_from_yaml_config():
         "fake",
         clazz="tests.transport.FakeTransport"
     )
-    transport = factory.create()
-    assert isinstance(transport, FakeTransport)
+    assert isinstance(OpenLineageClient(factory=factory).transport, FakeTransport)
+
 
 @patch.dict(os.environ, {"OPENLINEAGE_CONFIG": "tests/config/http.yml"})
 def test_factory_configures_http_transport_from_yaml_config():
-    factory = get_default_factory()
-    transport = factory.create()
-    assert isinstance(transport, HttpTransport)
+    client = OpenLineageClient()
+    assert isinstance(client.transport, HttpTransport)
 
 
 def test_factory_registers_from_dict():
@@ -109,15 +105,13 @@ def test_automatically_registers_http_kafka():
     assert KafkaTransport in factory.transports.values()
 
 
-@patch('openlineage.client.transport.factory.yaml')
+@patch('openlineage.client.utils.yaml')
 @patch('os.listdir')
 @patch('os.path.join')
 def test_transport_decorator_registers(join, listdir, yaml):
     listdir.return_value = "openlineage.yml"
     yaml.safe_load.return_value = {"transport": {"type": "fake"}}
-
-    transport = get_default_factory().create()
-    assert isinstance(transport, FakeTransport)
+    assert isinstance(OpenLineageClient().transport, FakeTransport)
 
 
 @pytest.mark.parametrize("env_var_value, should_be_noop", [
@@ -130,7 +124,7 @@ def test_transport_decorator_registers(join, listdir, yaml):
 ])
 def test_env_disables_client(env_var_value, should_be_noop):
     with patch.dict(os.environ, {"OPENLINEAGE_DISABLED": env_var_value}):
-        transport = get_default_factory().create()
+        transport = DefaultTransportFactory().create()
         is_noop = isinstance(transport, NoopTransport)
         assert is_noop is should_be_noop
 
@@ -145,5 +139,4 @@ def test_env_disabled_ignores_config():
         "fake",
         clazz="tests.transport.FakeTransport"
     )
-    transport = factory.create()
-    assert isinstance(transport, NoopTransport)
+    assert isinstance(OpenLineageClient(factory=factory).transport, NoopTransport)
