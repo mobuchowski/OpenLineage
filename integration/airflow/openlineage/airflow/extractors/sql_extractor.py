@@ -51,13 +51,15 @@ class SqlExtractor(BaseExtractor):
 
     def extract(self) -> TaskMetadata:
         task_name = f"{self.operator.dag_id}.{self.operator.task_id}"
-        job_facets = {"sql": SqlJobFacet(query=self._normalize_sql(self.operator.sql))}
+        sqls = self._normalize_sql()
+        joined_sql = ";\n".join(sqls)
+        job_facets = {"sql": SqlJobFacet(query=joined_sql)}
         run_facets: Dict = {}
 
         # (1) Parse sql statement to obtain input / output tables.
-        self.log.debug(f"Sending SQL to parser: {self.operator.sql}")
+        self.log.debug(f"Sending SQL to parser: {joined_sql}")
         sql_meta: Optional[SqlMeta] = parse(
-            self.operator.sql,
+            sqls,
             dialect=self.dialect,
             default_schema=self.default_schema
         )
@@ -278,12 +280,10 @@ class SqlExtractor(BaseExtractor):
             allow_trailing_semicolon=self._allow_trailing_semicolon,
         )
 
-    @staticmethod
-    def _normalize_sql(sql: Union[str, Iterable[str]]):
-        if isinstance(sql, str):
-            sql = [stmt for stmt in sql.split(";") if stmt != ""]
-        sql = [obj for stmt in sql for obj in stmt.split(";") if obj != ""]
-        return ";\n".join(sql)
+    def _normalize_sql(self) -> list[str]:
+        if isinstance(self.operator.sql, str):
+            return self.hook.split_sql_string(self.operator.sql)
+        return self.operator.sql
 
     @staticmethod
     def _get_tables_hierarchy(
