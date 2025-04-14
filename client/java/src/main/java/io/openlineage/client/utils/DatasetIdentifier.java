@@ -16,7 +16,8 @@ public class DatasetIdentifier {
   List<Symlink> symlinks;
 
   public enum SymlinkType {
-    TABLE
+    TABLE,
+    UNKNOWN
   };
 
   public DatasetIdentifier(String name, String namespace) {
@@ -38,6 +39,12 @@ public class DatasetIdentifier {
 
   public DatasetIdentifier withSymlink(Symlink symlink) {
     symlinks.add(symlink);
+    return this;
+  }
+
+  public DatasetIdentifier merge(DatasetIdentifier ident) {
+    symlinks.add(new Symlink(ident.getName(), ident.getNamespace(), SymlinkType.UNKNOWN));
+    symlinks.addAll(ident.getSymlinks());
     return this;
   }
 

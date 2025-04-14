@@ -13,6 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockserver.model.HttpRequest.request;
 
 import com.google.common.collect.ImmutableList;
+import io.openlineage.client.OpenLineage;
 import io.openlineage.client.OpenLineage.ColumnLineageDatasetFacet;
 import io.openlineage.client.OpenLineage.InputDataset;
 import io.openlineage.client.OpenLineage.InputDatasetInputFacets;
@@ -32,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -54,6 +56,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIf;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.mockserver.integration.ClientAndServer;
 import org.mockserver.model.HttpRequest;
@@ -107,12 +110,17 @@ class SparkIcebergIntegrationTest {
                 "http://localhost:" + mockServer.getPort() + "/api/v1/namespaces/iceberg-namespace")
             .config("spark.openlineage.facets.debug.disabled", "false")
             .config("spark.extraListeners", OpenLineageSparkListener.class.getName())
+            .config("spark.sql.defaultCatalog", "spark_catalog")
             .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkCatalog")
             .config("spark.sql.catalog.spark_catalog.type", "hadoop")
             .config("spark.sql.catalog.spark_catalog.warehouse", "/tmp/iceberg")
             .config(
                 "spark.sql.extensions",
                 "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
+            .config("spark.sql.catalog.jdbc.type", "jdbc")
+            .config("spark.sql.catalog.jdbc", "org.apache.iceberg.spark.SparkCatalog")
+            .config("spark.sql.catalog.jdbc.uri", "jdbc:sqlite:/tmp/iceberg_catalog_db.sqlite:")
+            .config("spark.sql.catalog.jdbc.warehouse", "/tmp/iceberg/")
             .config("spark.sql.sources.partitionOverwriteMode", "dynamic")
             .config(
                 "spark.openlineage.dataset.removePath.pattern",
@@ -609,6 +617,53 @@ class SparkIcebergIntegrationTest {
   }
 
   @Test
+  @DisabledIf("isJava8AndSpark35")
+  @SuppressWarnings("PMD.JUnitTestsShouldIncludeAssert")
+  void testJdbcCatalog() {
+    clearTables(
+        "temp",
+        "jdbc.default.scan_source1",
+        "jdbc.default.scan_target1",
+        "jdbc.default.scan_target2");
+    createTempDataset(3).createOrReplaceTempView("temp");
+    spark.sql("CREATE TABLE jdbc.default.scan_source USING iceberg AS SELECT * FROM temp");
+    spark.sql(
+        "CREATE TABLE jdbc.default.scan_target USING iceberg AS SELECT * FROM jdbc.default.scan_source");
+
+    List<RunEvent> runEvents = getEventsEmittedWithJobName(mockServer, "scan_target");
+
+    assertThat(
+            runEvents.stream()
+                .flatMap(e -> e.getInputs().stream())
+                .filter(
+                    e ->
+                        hasSymlinkWith(
+                            e,
+                            symlink ->
+                                symlink.getName().endsWith("scan_source")
+                                    && symlink.getNamespace().startsWith("sqlite"))))
+        .isNotEmpty();
+
+    assertThat(
+            runEvents.stream()
+                .flatMap(e -> e.getOutputs().stream())
+                .filter(
+                    e ->
+                        hasSymlinkWith(
+                            e,
+                            symlink ->
+                                symlink.getName().endsWith("scan_target")
+                                    && symlink.getNamespace().startsWith("sqlite"))))
+        .isNotEmpty();
+  }
+
+  private boolean hasSymlinkWith(
+      OpenLineage.Dataset dataset,
+      Predicate<OpenLineage.SymlinksDatasetFacetIdentifiers> predicate) {
+    return dataset.getFacets().getSymlinks().getIdentifiers().stream().anyMatch(predicate);
+  }
+
+  @Test
   @SuppressWarnings("PMD.JUnitTestsShouldIncludeAssert")
   void testMultipleScanReportsForSameDataset() {
     if (JAVA_VERSION.startsWith("1.8") && System.getProperty(SPARK_VERSION).startsWith("3.5")) {
@@ -735,8 +790,12 @@ class SparkIcebergIntegrationTest {
   }
 
   private void clearTables(String... tables) {
-    Arrays.asList(tables).stream()
-        .filter(t -> spark.catalog().tableExists(t))
-        .forEach(t -> spark.sql("DROP TABLE IF EXISTS " + t));
+    Arrays.asList(tables).stream().forEach(t -> spark.sql("DROP TABLE IF EXISTS " + t));
+  }
+
+  @SuppressWarnings("PMD.UnusedPrivateMethod")
+  private static boolean isJava8AndSpark35() {
+    return System.getProperty("java.version").startsWith("1.8")
+        && System.getProperty(SPARK_VERSION).startsWith("3.5");
   }
 }
