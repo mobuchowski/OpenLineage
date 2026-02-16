@@ -356,16 +356,17 @@ class RddExecutionContext implements ExecutionContext {
   }
 
   private OpenLineage.ParentRunFacet buildApplicationParentFacet() {
+    String resolvedAppJobName = JobNameBuilder.resolveApplicationJobName(olContext);
     return PlanUtils.parentRunFacet(
         eventEmitter.getApplicationRunId(),
-        eventEmitter.getApplicationJobName(),
+        resolvedAppJobName,
         eventEmitter.getJobNamespace(),
         eventEmitter
             .getRootParentRunId()
             .orElse(eventEmitter.getParentRunId().orElse(eventEmitter.getApplicationRunId())),
         eventEmitter
             .getRootParentJobName()
-            .orElse(eventEmitter.getParentJobName().orElse(eventEmitter.getApplicationJobName())),
+            .orElse(eventEmitter.getParentJobName().orElse(resolvedAppJobName)),
         eventEmitter
             .getRootParentJobNamespace()
             .orElse(eventEmitter.getParentJobNamespace().orElse(eventEmitter.getJobNamespace())));

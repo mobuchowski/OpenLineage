@@ -29,6 +29,15 @@ public class JobNameBuilder {
   private static final ApplicationJobNameResolver applicationJobNameResolver =
       new ApplicationJobNameResolver(ApplicationJobNameResolver.buildProvidersList());
 
+  /**
+   * Resolves the application job name using the provider chain (OpenLineage config override, AWS
+   * Glue detection, Spark app name fallback). Use this instead of the raw spark.app.name to get the
+   * correct application-level job name in environments like AWS Glue.
+   */
+  public static String resolveApplicationJobName(OpenLineageContext context) {
+    return applicationJobNameResolver.getJobName(context);
+  }
+
   public static String build(OpenLineageContext context) {
     if (context.getJobName() != null) {
       return context.getJobName();
