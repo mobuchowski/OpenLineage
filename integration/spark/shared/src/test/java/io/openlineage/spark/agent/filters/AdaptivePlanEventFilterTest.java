@@ -35,11 +35,24 @@ class AdaptivePlanEventFilterTest {
   }
 
   @Test
-  void testAdaptivePlanIsFiltered() {
+  void testNonFinalAdaptivePlanIsFiltered() {
     try (MockedStatic mocked = mockStatic(EventFilterUtils.class)) {
       when(EventFilterUtils.isDeltaPlan()).thenReturn(true);
       when(sparkPlan.nodeName()).thenReturn("AdaptiveSparkPlan");
+      // SparkPlan mock has no isFinalPlan method, so reflection returns false (not final)
       assertTrue(filter.isDisabled(sparkListenerEvent));
+    }
+  }
+
+  @Test
+  void testFinalAdaptivePlanIsNotFiltered() {
+    try (MockedStatic mocked = mockStatic(EventFilterUtils.class)) {
+      when(EventFilterUtils.isDeltaPlan()).thenReturn(true);
+      FinalAdaptiveSparkPlan finalPlan = mock(FinalAdaptiveSparkPlan.class);
+      when(finalPlan.nodeName()).thenReturn("AdaptiveSparkPlan");
+      when(finalPlan.isFinalPlan()).thenReturn(true);
+      when(queryExecution.executedPlan()).thenReturn(finalPlan);
+      assertFalse(filter.isDisabled(sparkListenerEvent));
     }
   }
 
@@ -77,5 +90,10 @@ class AdaptivePlanEventFilterTest {
       when(sparkPlan.nodeName()).thenReturn("AdaptiveSparkPlan");
       assertFalse(filter.isDisabled(sparkListenerEvent));
     }
+  }
+
+  /** Test helper that extends SparkPlan with isFinalPlan method for reflection-based access. */
+  abstract static class FinalAdaptiveSparkPlan extends SparkPlan {
+    public abstract boolean isFinalPlan();
   }
 }
