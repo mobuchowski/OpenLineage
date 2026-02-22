@@ -188,7 +188,7 @@ class DbtArtifactProcessor:
         self.manifest_version = self.get_schema_version(manifest)
 
         self.run_metadata = run_result["metadata"]
-        self.command = run_result["args"]["which"]
+        self.command = run_result.get("args", {}).get("which")
 
         self.extract_adapter_type(profile)
         self.extract_dataset_namespace(profile)
@@ -260,7 +260,7 @@ class DbtArtifactProcessor:
 
             if not any(name.startswith(prefix) for prefix in ("model.", "source.", "snapshot.")):
                 continue
-            if run["status"] == "skipped":
+            if run["status"] in ("skipped", "no-op"):
                 continue
 
             output_node = nodes[name]
@@ -451,13 +451,19 @@ class DbtArtifactProcessor:
                 if any(node.startswith(prefix) for prefix in ["model.", "source.", "seed."]):
                     model_node = node
 
-            if self.manifest_version >= 12:  # type: ignore
-                name = test_node["name"]
-                node_columns = test_node
-
+            # GenericTest nodes (schema tests from .yml) always have test_metadata with name
+            # (test type like "not_null") and kwargs (including column_name).
+            # SingularTest nodes (custom tests from tests/*.sql) never have test_metadata.
+            # The distinction is by node type, not manifest version — using version >= 12
+            # was incorrect and caused: (1) wrong assertion name (full instance name vs type),
+            # and (2) column always None (kwargs not at node root, only inside test_metadata).
+            test_metadata = test_node.get("test_metadata")
+            if test_metadata:
+                name = test_metadata["name"]
+                node_columns = test_metadata
             else:
-                name = test_node["test_metadata"]["name"]
-                node_columns = test_node["test_metadata"]
+                name = test_node["name"]
+                node_columns = {}
 
             # Extract severity from config, normalize to lowercase
             config = test_node.get("config", {})
@@ -505,7 +511,7 @@ class DbtArtifactProcessor:
             inputs=inputs,
             outputs=[output] if output else [],
         )
-        if status == "success":
+        if status in ("success", "partial success"):
             return DbtRunResult(
                 start,
                 complete=RunEvent(
@@ -533,7 +539,10 @@ class DbtArtifactProcessor:
             )
         else:
             # Should not happen?
-            raise ValueError(f"Run status was {status}, should be in ['success', 'skipped', 'error']")
+            raise ValueError(
+                f"Run status was {status}, "
+                "should be in ['success', 'partial success', 'no-op', 'skipped', 'error']"
+            )
 
     def node_to_dataset(
         self,

@@ -126,7 +126,6 @@ class TestParseSeverity:
             producer="https://github.com/OpenLineage/OpenLineage/tree/0.0.1/integration/dbt",
             job_namespace="test-namespace",
         )
-        processor.manifest_version = 11  # Use version < 12 for test_metadata path
         return processor
 
     def test_severity_extracted_and_normalized_to_lowercase(self, processor):
@@ -254,3 +253,150 @@ class TestParseSeverity:
 
         assertion = assertions["model.project.my_model"][0]
         assert assertion.severity is None
+
+
+class TestParseAssertionsTestMetadata:
+    """Tests for test_metadata presence-based dispatch in parse_assertions."""
+
+    @pytest.fixture
+    def processor(self):
+        return DbtArtifactProcessor(
+            producer="https://github.com/OpenLineage/OpenLineage/tree/0.0.1/integration/dbt",
+            job_namespace="test-namespace",
+        )
+
+    def test_generic_test_with_test_metadata(self, processor):
+        """GenericTest nodes (schema tests from .yml) have test_metadata — name is the test type."""
+        nodes = {
+            "test.project.not_null_orders_amount": {
+                "name": "not_null_orders_amount",
+                "test_metadata": {
+                    "name": "not_null",
+                    "kwargs": {"column_name": "amount"},
+                },
+            }
+        }
+        manifest = {
+            "parent_map": {
+                "test.project.not_null_orders_amount": ["model.project.orders"],
+            }
+        }
+        run_results = {
+            "results": [
+                {
+                    "unique_id": "test.project.not_null_orders_amount",
+                    "status": "pass",
+                }
+            ]
+        }
+        context = DbtRunContext(manifest=manifest, run_results=run_results)
+        assertions = processor.parse_assertions(context, nodes)
+
+        assertion = assertions["model.project.orders"][0]
+        assert assertion.assertion == "not_null"
+        assert assertion.column == "amount"
+
+    def test_singular_test_without_test_metadata(self, processor):
+        """SingularTest nodes (custom tests from tests/*.sql) have no test_metadata."""
+        nodes = {
+            "test.project.my_custom_test": {
+                "name": "my_custom_test",
+                # No test_metadata
+            }
+        }
+        manifest = {
+            "parent_map": {
+                "test.project.my_custom_test": ["model.project.orders"],
+            }
+        }
+        run_results = {
+            "results": [
+                {
+                    "unique_id": "test.project.my_custom_test",
+                    "status": "fail",
+                }
+            ]
+        }
+        context = DbtRunContext(manifest=manifest, run_results=run_results)
+        assertions = processor.parse_assertions(context, nodes)
+
+        assertion = assertions["model.project.orders"][0]
+        assert assertion.assertion == "my_custom_test"
+        assert assertion.column is None
+        assert assertion.success is False
+
+
+class TestRunStatusHandling:
+    """Tests for no-op and partial success run statuses in parse_execution and _to_openlineage_events."""
+
+    @pytest.fixture
+    def processor(self):
+        p = DbtArtifactProcessor(
+            producer="https://github.com/OpenLineage/OpenLineage/tree/0.0.1/integration/dbt",
+            job_namespace="test-namespace",
+        )
+        p.command = "run"
+        return p
+
+    def test_no_op_status_skipped_in_parse_execution(self, processor):
+        """Runs with status 'no-op' should be skipped (no events produced)."""
+        context = DbtRunContext(
+            manifest={"parent_map": {"model.project.my_model": []}},
+            run_results={
+                "results": [
+                    {
+                        "unique_id": "model.project.my_model",
+                        "status": "no-op",
+                        "timing": [],
+                        "adapter_response": {},
+                    }
+                ]
+            },
+        )
+        nodes = {
+            "model.project.my_model": {
+                "database": "db",
+                "schema": "schema",
+                "alias": "my_model",
+                "description": "",
+                "columns": {},
+                "fqn": ["project", "my_model"],
+            }
+        }
+        events = processor.parse_execution(context, nodes)
+        assert events.starts == []
+        assert events.completes == []
+        assert events.fails == []
+
+    def test_partial_success_emits_complete_event(self, processor):
+        """Runs with status 'partial success' should emit a COMPLETE event."""
+        result = processor._to_openlineage_events(
+            status="partial success",
+            started_at="2024-01-01T00:00:00Z",
+            completed_at="2024-01-01T00:01:00Z",
+            run=MagicMock(),
+            job=MagicMock(),
+            inputs=[],
+            output=None,
+        )
+        assert result is not None
+        assert result.complete is not None
+        assert result.fail is None
+
+
+class TestArgsWhichFallback:
+    """Tests for graceful fallback when args.which is missing from run_results."""
+
+    def test_missing_args_key(self):
+        """Missing 'args' key should not raise — command should be None."""
+        processor = DbtArtifactProcessor(
+            producer="https://github.com/OpenLineage/OpenLineage/tree/0.0.1/integration/dbt",
+            job_namespace="test-namespace",
+        )
+        processor.should_raise_on_unsupported_command = False
+        run_result = {
+            "metadata": {"dbt_schema_version": "https://schemas.getdbt.com/dbt/run-results/v6.json"}
+        }
+        processor.run_metadata = run_result["metadata"]
+        processor.command = run_result.get("args", {}).get("which")
+        assert processor.command is None
