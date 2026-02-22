@@ -126,7 +126,6 @@ class TestParseSeverity:
             producer="https://github.com/OpenLineage/OpenLineage/tree/0.0.1/integration/dbt",
             job_namespace="test-namespace",
         )
-        processor.manifest_version = 11  # Use version < 12 for test_metadata path
         return processor
 
     def test_severity_extracted_and_normalized_to_lowercase(self, processor):
@@ -254,3 +253,74 @@ class TestParseSeverity:
 
         assertion = assertions["model.project.my_model"][0]
         assert assertion.severity is None
+
+
+class TestParseAssertionsTestMetadata:
+    """Tests for test_metadata presence-based dispatch in parse_assertions."""
+
+    @pytest.fixture
+    def processor(self):
+        return DbtArtifactProcessor(
+            producer="https://github.com/OpenLineage/OpenLineage/tree/0.0.1/integration/dbt",
+            job_namespace="test-namespace",
+        )
+
+    def test_generic_test_with_test_metadata(self, processor):
+        """GenericTest nodes (schema tests from .yml) have test_metadata — name is the test type."""
+        nodes = {
+            "test.project.not_null_orders_amount": {
+                "name": "not_null_orders_amount",
+                "test_metadata": {
+                    "name": "not_null",
+                    "kwargs": {"column_name": "amount"},
+                },
+            }
+        }
+        manifest = {
+            "parent_map": {
+                "test.project.not_null_orders_amount": ["model.project.orders"],
+            }
+        }
+        run_results = {
+            "results": [
+                {
+                    "unique_id": "test.project.not_null_orders_amount",
+                    "status": "pass",
+                }
+            ]
+        }
+        context = DbtRunContext(manifest=manifest, run_results=run_results)
+        assertions = processor.parse_assertions(context, nodes)
+
+        assertion = assertions["model.project.orders"][0]
+        assert assertion.assertion == "not_null"
+        assert assertion.column == "amount"
+
+    def test_singular_test_without_test_metadata(self, processor):
+        """SingularTest nodes (custom tests from tests/*.sql) have no test_metadata."""
+        nodes = {
+            "test.project.my_custom_test": {
+                "name": "my_custom_test",
+                # No test_metadata
+            }
+        }
+        manifest = {
+            "parent_map": {
+                "test.project.my_custom_test": ["model.project.orders"],
+            }
+        }
+        run_results = {
+            "results": [
+                {
+                    "unique_id": "test.project.my_custom_test",
+                    "status": "fail",
+                }
+            ]
+        }
+        context = DbtRunContext(manifest=manifest, run_results=run_results)
+        assertions = processor.parse_assertions(context, nodes)
+
+        assertion = assertions["model.project.orders"][0]
+        assert assertion.assertion == "my_custom_test"
+        assert assertion.column is None
+        assert assertion.success is False
