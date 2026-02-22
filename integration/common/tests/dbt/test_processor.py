@@ -254,3 +254,21 @@ class TestParseSeverity:
 
         assertion = assertions["model.project.my_model"][0]
         assert assertion.severity is None
+
+
+class TestArgsWhichFallback:
+    """Tests for graceful fallback when args.which is missing from run_results."""
+
+    def test_missing_args_key(self):
+        """Missing 'args' key should not raise — command should be None."""
+        processor = DbtArtifactProcessor(
+            producer="https://github.com/OpenLineage/OpenLineage/tree/0.0.1/integration/dbt",
+            job_namespace="test-namespace",
+        )
+        processor.should_raise_on_unsupported_command = False
+        run_result = {
+            "metadata": {"dbt_schema_version": "https://schemas.getdbt.com/dbt/run-results/v6.json"}
+        }
+        processor.run_metadata = run_result["metadata"]
+        processor.command = run_result.get("args", {}).get("which")
+        assert processor.command is None

@@ -188,7 +188,7 @@ class DbtArtifactProcessor:
         self.manifest_version = self.get_schema_version(manifest)
 
         self.run_metadata = run_result["metadata"]
-        self.command = run_result["args"]["which"]
+        self.command = run_result.get("args", {}).get("which")
 
         self.extract_adapter_type(profile)
         self.extract_dataset_namespace(profile)
