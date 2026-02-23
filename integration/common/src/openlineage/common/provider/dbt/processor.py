@@ -260,7 +260,7 @@ class DbtArtifactProcessor:
 
             if not any(name.startswith(prefix) for prefix in ("model.", "source.", "snapshot.")):
                 continue
-            if run["status"] == "skipped":
+            if run["status"] in ("skipped", "no-op"):
                 continue
 
             output_node = nodes[name]
@@ -505,7 +505,7 @@ class DbtArtifactProcessor:
             inputs=inputs,
             outputs=[output] if output else [],
         )
-        if status == "success":
+        if status in ("success", "partial success"):
             return DbtRunResult(
                 start,
                 complete=RunEvent(
@@ -533,7 +533,10 @@ class DbtArtifactProcessor:
             )
         else:
             # Should not happen?
-            raise ValueError(f"Run status was {status}, should be in ['success', 'skipped', 'error']")
+            raise ValueError(
+                f"Run status was {status}, "
+                "should be in ['success', 'partial success', 'no-op', 'skipped', 'error']"
+            )
 
     def node_to_dataset(
         self,

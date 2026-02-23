@@ -254,3 +254,61 @@ class TestParseSeverity:
 
         assertion = assertions["model.project.my_model"][0]
         assert assertion.severity is None
+
+
+class TestRunStatusHandling:
+    """Tests for no-op and partial success run statuses."""
+
+    @pytest.fixture
+    def processor(self):
+        p = DbtArtifactProcessor(
+            producer="https://github.com/OpenLineage/OpenLineage/tree/0.0.1/integration/dbt",
+            job_namespace="test-namespace",
+        )
+        p.command = "run"
+        return p
+
+    def test_no_op_status_skipped_in_parse_execution(self, processor):
+        """Runs with status 'no-op' should be skipped (no events produced)."""
+        context = DbtRunContext(
+            manifest={"parent_map": {"model.project.my_model": []}},
+            run_results={
+                "results": [
+                    {
+                        "unique_id": "model.project.my_model",
+                        "status": "no-op",
+                        "timing": [],
+                        "adapter_response": {},
+                    }
+                ]
+            },
+        )
+        nodes = {
+            "model.project.my_model": {
+                "database": "db",
+                "schema": "schema",
+                "alias": "my_model",
+                "description": "",
+                "columns": {},
+                "fqn": ["project", "my_model"],
+            }
+        }
+        events = processor.parse_execution(context, nodes)
+        assert events.starts == []
+        assert events.completes == []
+        assert events.fails == []
+
+    def test_partial_success_emits_complete_event(self, processor):
+        """Runs with status 'partial success' should emit a COMPLETE event."""
+        result = processor._to_openlineage_events(
+            status="partial success",
+            started_at="2024-01-01T00:00:00Z",
+            completed_at="2024-01-01T00:01:00Z",
+            run=MagicMock(),
+            job=MagicMock(),
+            inputs=[],
+            output=None,
+        )
+        assert result is not None
+        assert result.complete is not None
+        assert result.fail is None
