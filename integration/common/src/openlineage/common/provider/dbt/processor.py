@@ -465,6 +465,8 @@ class DbtArtifactProcessor:
             if severity:
                 severity = severity.lower()
 
+            # 'warn' status means the test triggered a warning threshold but not a hard failure.
+            # We map it to success=False since the assertion did not fully pass.
             assertions[model_node].append(
                 data_quality_assertions_dataset.Assertion(
                     assertion=name,
