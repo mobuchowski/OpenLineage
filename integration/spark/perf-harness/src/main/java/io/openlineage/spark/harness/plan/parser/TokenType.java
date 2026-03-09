@@ -1,0 +1,55 @@
+/*
+/* Copyright 2018-2026 contributors to the OpenLineage project
+/* SPDX-License-Identifier: Apache-2.0
+*/
+
+package io.openlineage.spark.harness.plan.parser;
+
+public enum TokenType {
+  IDENTIFIER,
+  HASH,
+  NUMBER,
+  STRING_LITERAL,
+  AS,
+  CASE,
+  WHEN,
+  THEN,
+  ELSE,
+  END,
+  IN,
+  NOT,
+  AND,
+  OR,
+  IS,
+  NULL_KW,
+  TRUE_KW,
+  FALSE_KW,
+  CAST,
+  IF,
+  STRUCT,
+  ARRAY,
+  MAP,
+  EQ,
+  NEQ,
+  LT,
+  GT,
+  LTE,
+  GTE,
+  AND_OP,
+  OR_OP,
+  LPAREN,
+  RPAREN,
+  LBRACKET,
+  RBRACKET,
+  COMMA,
+  DOT,
+  COLON,
+  ELLIPSIS,
+  CLASS_KW,
+  PLUS,
+  MINUS,
+  STAR,
+  SLASH,
+  PERCENT,
+  EOF
+}

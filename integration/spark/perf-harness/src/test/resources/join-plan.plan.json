@@ -1,0 +1,64 @@
+{
+  "version": "1",
+  "source": "test",
+  "rootNodeId": 0,
+  "nodes": [
+    {
+      "id": 0,
+      "type": "Project",
+      "children": [1],
+      "output": [
+        { "name": "id", "exprId": 1, "dataType": "long" },
+        { "name": "name", "exprId": 2, "dataType": "string" },
+        { "name": "amount", "exprId": 5, "dataType": "double" }
+      ],
+      "truncatedColumns": 0,
+      "attributes": {},
+      "conditionColumns": []
+    },
+    {
+      "id": 1,
+      "type": "Join",
+      "children": [2, 3],
+      "output": [],
+      "truncatedColumns": 0,
+      "attributes": { "joinType": "LeftOuter" },
+      "conditionColumns": [{ "name": "id", "exprId": 1, "dataType": "long" }]
+    },
+    {
+      "id": 2,
+      "type": "SubqueryAlias",
+      "children": [4],
+      "output": [],
+      "truncatedColumns": 0,
+      "attributes": { "alias": "users" },
+      "conditionColumns": []
+    },
+    {
+      "id": 3,
+      "type": "Relation",
+      "children": [],
+      "output": [
+        { "name": "id", "exprId": 4, "dataType": "long" },
+        { "name": "amount", "exprId": 5, "dataType": "double" }
+      ],
+      "truncatedColumns": 0,
+      "attributes": { "relationType": "parquet" },
+      "conditionColumns": []
+    },
+    {
+      "id": 4,
+      "type": "Relation",
+      "children": [],
+      "output": [
+        { "name": "id", "exprId": 1, "dataType": "long" },
+        { "name": "name", "exprId": 2, "dataType": "string" },
+        { "name": "age", "exprId": 3, "dataType": "int" }
+      ],
+      "truncatedColumns": 0,
+      "attributes": { "relationType": "parquet" },
+      "conditionColumns": []
+    }
+  ],
+  "metadata": {}
+}

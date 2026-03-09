@@ -1,0 +1,46 @@
+{
+  "version": "1",
+  "source": "test",
+  "rootNodeId": 0,
+  "nodes": [
+    {
+      "id": 0,
+      "type": "Project",
+      "children": [1],
+      "output": [
+        { "name": "col_a", "exprId": 100, "dataType": "string" },
+        { "name": "col_b", "exprId": 101, "dataType": "long" }
+      ],
+      "truncatedColumns": 0,
+      "attributes": {},
+      "conditionColumns": []
+    },
+    {
+      "id": 1,
+      "type": "Filter",
+      "children": [2],
+      "output": [
+        { "name": "col_a", "exprId": 100, "dataType": "string" },
+        { "name": "col_b", "exprId": 101, "dataType": "long" },
+        { "name": "col_c", "exprId": 102, "dataType": "int" }
+      ],
+      "truncatedColumns": 0,
+      "attributes": {},
+      "conditionColumns": [{ "name": "col_a", "exprId": 100, "dataType": "string" }]
+    },
+    {
+      "id": 2,
+      "type": "Relation",
+      "children": [],
+      "output": [
+        { "name": "col_a", "exprId": 100, "dataType": "string" },
+        { "name": "col_b", "exprId": 101, "dataType": "long" },
+        { "name": "col_c", "exprId": 102, "dataType": "int" }
+      ],
+      "truncatedColumns": 0,
+      "attributes": { "relationType": "parquet" },
+      "conditionColumns": []
+    }
+  ],
+  "metadata": {}
+}

@@ -14,6 +14,8 @@ include 'shared'
 include 'app'
 include 'scala-fixtures'
 
+include 'perf-harness'
+
 include 'snowflake'
 project(":snowflake").projectDir = file("./vendor/snowflake")
 

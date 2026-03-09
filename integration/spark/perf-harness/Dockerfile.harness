@@ -1,0 +1,16 @@
+FROM eclipse-temurin:21-jdk-jammy
+WORKDIR /harness
+
+# async-profiler — baked in so it's always available without mounting.
+# Produces CPU flamegraphs at /tmp/harness-logs/flamegraph-*.html (mounted from host).
+RUN apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL https://github.com/async-profiler/async-profiler/releases/download/v3.0/async-profiler-3.0-linux-x64.tar.gz \
+    | tar xz -C /harness \
+ && mv /harness/async-profiler-3.0-linux-x64 /harness/async-profiler
+
+# Harness fat JAR — baked into the image layer so Docker rebuilds only when the JAR changes.
+# OL JAR and dd-java-agent are mounted at runtime (version-swappable without rebuild).
+COPY build/libs/ol-perf-harness-*-all.jar /harness/harness.jar
+
+# ENTRYPOINT is plain java — all JVM flags, classpath, and main class are passed by docker run.
+ENTRYPOINT ["java"]

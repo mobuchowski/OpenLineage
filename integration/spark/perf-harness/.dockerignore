@@ -1,0 +1,4 @@
+# Exclude everything from the Docker build context except the fat JAR.
+# This keeps the context small and avoids sending hundreds of MB of source/class files.
+*
+!build/libs/

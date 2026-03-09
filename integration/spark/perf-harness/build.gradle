@@ -1,0 +1,467 @@
+/*
+/* Copyright 2018-2026 contributors to the OpenLineage project
+/* SPDX-License-Identifier: Apache-2.0
+*/
+
+// KEY DESIGN CONSTRAINT: The harness must NOT have a compile-time dependency on OL.
+// We need to backtest against previous OL versions (e.g., compare 1.30 vs 1.34 performance).
+// The OL JAR (shadow/fat JAR that includes the listener, visitors, and all OL code) is loaded
+// at runtime from a configurable path. OL classes are accessed only through Spark's listener
+// mechanism and reflection — never imported at compile time.
+//
+// TARGET: Spark 4.0.0 / Scala 2.13 only. Rationale:
+//   - Zinc compiler-bridge_2.13-1.9.3.jar is pre-compiled and cached; no JVM 21 init crash.
+//   - OL plan traversal is Spark-version-independent; Spark 4 is the clean long-term target.
+//   - Harness produces results comparable across OL versions, not across Spark versions.
+
+plugins {
+    id("java")
+    id("scala")
+    id("io.openlineage.common-config")
+    id("com.github.johnrengelman.shadow")
+}
+
+ext {
+    spark = project.findProperty('spark40.spark.version').toString()  // "4.0.0"
+    scala = "2.13"
+
+    byteBuddyVersion = '1.18.7'
+    // dd-trace-api: compile-time API for custom spans/metrics in harness code.
+    // dd-java-agent (the actual profiling agent) is resolved separately via ddAgent configuration.
+    ddTraceVersion = '1.60.1'
+    junit5Version = '5.11.4'
+    assertjVersion = '3.27.6'
+    ddAgentVersion = '1.60.1'
+}
+
+// async-profiler shared library — auto-detected at the Homebrew path on macOS,
+// or override via -PasyncProfilerPath=/path/to/libasyncProfiler.dylib.
+// If not found locally, local tasks run without it (Docker always has it baked in).
+def asyncProfilerPath = project.findProperty('asyncProfilerPath')
+    ?: (file('/opt/homebrew/lib/libasyncProfiler.dylib').exists()
+        ? '/opt/homebrew/lib/libasyncProfiler.dylib' : null)
+
+// The OL JAR to benchmark — configurable via Gradle property or env var.
+// Must be an OL shadow/fat JAR (e.g., openlineage-spark-agent_2.13-1.34.0.jar).
+// Usage: ./gradlew runHarness -PolJar=../app/build/libs/openlineage-spark-agent_2.13-1.45.0-SNAPSHOT-shadow.jar
+def olJarPath = project.findProperty('olJar')
+    ?: System.getenv('OL_JAR_PATH')
+    ?: "${project.rootProject.projectDir}/build/libs/openlineage-spark_${scala}-${project.version}.jar"
+
+configurations {
+    // Runtime-only classpath carrying the OL JAR under test.
+    // Not on the compile classpath — harness code must not import OL classes.
+    olRuntime {
+        canBeResolved = true
+        canBeConsumed = false
+    }
+
+    // Minimal classpath for HarnessBridge.scala compilation.
+    // Kept separate from the main compile classpath to limit what the Scala compiler sees.
+    // For Scala 2.13 + Zinc 1.9.3, compiler-bridge_2.13-1.9.3.jar is available as a
+    // pre-compiled binary in the Gradle cache — no bridge compilation step needed.
+    bridgeCompileOnly {
+        canBeResolved = true
+        canBeConsumed = false
+    }
+
+    // Resolved to attach dd-java-agent as -javaagent in runHarness.
+    ddAgent {
+        canBeResolved = true
+        canBeConsumed = false
+    }
+}
+
+dependencies {
+    // Spark at compile-time: harness builds LogicalPlan nodes using Catalyst classes.
+    // compileOnly because Spark is on the runtime classpath via implementation below.
+    compileOnly("org.apache.spark:spark-sql_${scala}:${spark}")
+    compileOnly("org.apache.spark:spark-hive_${scala}:${spark}")
+    compileOnly("org.apache.spark:spark-catalyst_${scala}:${spark}")
+
+    // ByteBuddy: runtime self-attach instrumentation (NOT a -javaagent; loaded as library).
+    implementation("net.bytebuddy:byte-buddy:${byteBuddyVersion}")
+    implementation("net.bytebuddy:byte-buddy-agent:${byteBuddyVersion}")
+
+    // Datadog trace API: compile-time only for custom span/metric tagging in HarnessRunner.
+    // The actual instrumentation is provided at runtime by dd-java-agent.
+    implementation("com.datadoghq:dd-trace-api:${ddTraceVersion}")
+
+    // OL JAR — runtime only. Harness interacts with OL via Spark listener registration
+    // (by class name) and an HTTP mock server. No OL imports allowed at compile time.
+    olRuntime(files(olJarPath))
+
+    // Spark at runtime: needed to actually run SparkSession and create QueryExecution.
+    implementation("org.apache.spark:spark-sql_${scala}:${spark}")
+    implementation("org.apache.spark:spark-hive_${scala}:${spark}")
+
+    // Bridge compilation: minimal spark-sql classpath for HarnessBridge.scala.
+    // Scala 2.13 has a pre-compiled compiler-bridge binary (not sources-only), so Zinc
+    // does not need to compile it — avoiding the JVM 21 initialization crash seen with 2.12.
+    bridgeCompileOnly("org.apache.spark:spark-sql_${scala}:${spark}")
+
+    // Datadog APM/profiling agent — resolved so runHarness can attach it as -javaagent.
+    ddAgent("com.datadoghq:dd-java-agent:${ddAgentVersion}") {
+        transitive = false
+    }
+
+    testImplementation(platform("org.junit:junit-bom:${junit5Version}"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testImplementation("org.assertj:assertj-core:${assertjVersion}")
+
+    // Jackson for Plan IR serialization (JSON). Spark brings Jackson transitively,
+    // but we declare it explicitly for the PlanConverter CLI which may run without Spark.
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.15.2")
+
+    implementation("org.slf4j:slf4j-api:2.0.16")
+    runtimeOnly(platform("org.apache.logging.log4j:log4j-bom:2.25.3"))
+    runtimeOnly("org.apache.logging.log4j:log4j-api")
+    runtimeOnly("org.apache.logging.log4j:log4j-core")
+    runtimeOnly("org.apache.logging.log4j:log4j-slf4j-impl")
+}
+
+// ── HarnessBridge.scala compilation ────────────────────────────────────────────
+// Mirrors the pattern in scala-fixtures/build.gradle.kts: a custom ScalaCompile task
+// with a minimal classpath to avoid Zinc crashing on the heavy dependency graph.
+// Scala 2.13 uses a pre-compiled compiler-bridge binary (compiler-bridge_2.13-1.9.3.jar),
+// so the painful "compile the bridge first" step is skipped entirely.
+
+def bridgeCompileTask = tasks.register("compileBridge", ScalaCompile) {
+    group = "build"
+    description = "Compile HarnessBridge.scala against a minimal spark-sql classpath"
+    classpath = configurations.bridgeCompileOnly
+    setSource(sourceSets.main.scala.srcDirs)
+    destinationDirectory.set(layout.buildDirectory.dir("classes/scala-bridge"))
+    scalaCompileOptions.additionalParameters = ["-target:jvm-1.8"]
+    scalaCompileOptions.incrementalOptions.analysisFile.set(
+        layout.buildDirectory.file("tmp/scala-bridge/compilerAnalysis/compileBridge.analysis"))
+    scalaCompileOptions.incrementalOptions.classfileBackupDir.set(
+        layout.buildDirectory.file("tmp/scala-bridge/classfileBackup/compileBridge.backup"))
+}
+
+// Package the bridge class into its own JAR for the harness runtime classpath.
+def bridgeJarTask = tasks.register("jarBridge", Jar) {
+    dependsOn(bridgeCompileTask)
+    group = "build"
+    description = "Package HarnessBridge into a JAR for the harness runtime classpath"
+    from(bridgeCompileTask.get().outputs)
+    archiveBaseName.set("ol-perf-harness-bridge_${scala}")
+    destinationDirectory.set(layout.buildDirectory.dir("libs"))
+    includeEmptyDirs = false
+}
+
+// Bridge JAR on compile + runtime classpath so Java code can import synthetic/generator classes.
+// HarnessBridge is in org.apache.spark.sql — accessible here but not imported by Java sources.
+dependencies {
+    implementation(files(bridgeJarTask.map { it.outputs.files.singleFile }))
+}
+
+// Disable the default compileScala task — all Scala compilation goes through compileBridge.
+tasks.named("compileScala") {
+    enabled = false
+}
+
+tasks.named("build") {
+    dependsOn(bridgeJarTask)
+}
+// ───────────────────────────────────────────────────────────────────────────────
+
+tasks.named("test", Test.class) {
+    useJUnitPlatform()
+    jvmArgs(
+        // ByteBuddy self-attach (jdk.attach.allowAttachSelf default varies by JDK distribution)
+        "-Djdk.attach.allowAttachSelf=true",
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+        "--add-opens=java.base/java.io=ALL-UNNAMED",
+        "--add-opens=java.base/java.net=ALL-UNNAMED",
+        "--add-opens=java.base/java.nio=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED",
+        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+        "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+        "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+        "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
+        "--add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED"
+    )
+}
+
+// Shared jvmArgs for local (non-Docker) runs
+def localJvmArgs = [
+    "-Djdk.attach.allowAttachSelf=true",
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+    "--add-opens=java.base/java.io=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/java.util=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+    "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+    "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
+    "--add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED",
+]
+
+// Shared doFirst block for local (non-Docker) runs: attach dd-java-agent when available.
+// ddprof is disabled on macOS (Linux-only native profiler); Docker tasks enable it.
+def attachDdAgentLocal = { task ->
+    task.doFirst {
+        def agentFiles = configurations.ddAgent.resolvedConfiguration.resolvedArtifacts
+        if (!agentFiles.isEmpty()) {
+            def agentJar = agentFiles.first().file
+            task.jvmArgs(
+                "-javaagent:${agentJar}",
+                "-Ddd.profiling.enabled=true",
+                "-Ddd.profiling.ddprof.enabled=false",
+                "-Ddd.profiling.allocation.enabled=true",
+                "-Ddd.profiling.heap.enabled=true",
+                "-Ddd.profiling.start.delay=1",
+                "-Ddd.profiling.start.force.first=true",
+                "-Ddd.profiling.upload.period=5",
+                "-Ddd.service=ol-perf-harness",
+                "-Ddd.env=perf-test",
+                "-Ddd.version=${task.systemProperties['dd.version'] ?: 'dev'}",
+                "-Ddd.trace.enabled=true",
+                "-Ddd.integration.spark.enabled=false",
+                "-Ddd.integration.grpc.enabled=false",
+                "-Ddd.agent.port=8128",
+                "-Ddd.agent.host=localhost"
+            )
+            logger.lifecycle("Datadog agent attached from: ${agentJar}")
+        } else {
+            logger.lifecycle("Datadog agent not found; running without APM profiling")
+        }
+        logger.lifecycle("OL JAR under test: ${olJarPath}")
+    }
+}
+
+// Attaches async-profiler for CPU flamegraph output to logs/<flamegraphName>.
+// No-ops silently if async-profiler is not installed locally.
+def attachAsyncProfiler = { task, String flamegraphName ->
+    task.doFirst {
+        def logsDir = layout.projectDirectory.dir("logs").asFile
+        logsDir.mkdirs()
+        def outFile = new File(logsDir, flamegraphName).absolutePath
+        if (asyncProfilerPath) {
+            task.jvmArgs("-agentpath:${asyncProfilerPath}=start,event=cpu,interval=1ms,file=${outFile},flamegraph")
+            logger.lifecycle("async-profiler: flamegraph → ${outFile}")
+        } else {
+            logger.lifecycle("async-profiler not found (install via 'brew install async-profiler' or set -PasyncProfilerPath=<path>)")
+        }
+    }
+}
+
+tasks.register("runSmoke", JavaExec) {
+    group = "performance"
+    description = "Quick smoke test for ByteBuddy interception hypotheses. Runs in ~15s."
+
+    classpath = sourceSets.main.runtimeClasspath + configurations.olRuntime +
+        files(bridgeJarTask.map { it.outputs.files.singleFile })
+    mainClass = "io.openlineage.spark.harness.HarnessLauncher"
+
+    def olVersion = project.findProperty('olVersion') ?: 'dev'
+    systemProperties = [
+        "spark.version": spark,
+        "scala.binary.version": scala,
+        "ol.jar.path": olJarPath,
+        "harness.log.dir": layout.projectDirectory.dir("logs").asFile.absolutePath,
+        "harness.test": "smoke",
+        "dd.version": olVersion,
+    ]
+
+    environment(
+        "DD_PROFILING_START_DELAY": "1",
+        "DD_PROFILING_START_FORCE_FIRST": "true",
+    )
+
+    jvmArgs(["-Xmx2g"] + localJvmArgs)
+    attachDdAgentLocal(it)
+    attachAsyncProfiler(it, "flamegraph-smoke.html")
+}
+
+tasks.register("convertPlan", JavaExec) {
+    group = "performance"
+    description = "Convert a serialized Spark logical plan to harness IR format. " +
+        "Usage: ./gradlew convertPlan -PplanInput=plan.txt -PplanOutput=plan.json [--args='--json']"
+
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = "io.openlineage.spark.harness.plan.PlanConverter"
+
+    def planInput = project.findProperty('planInput') ?: ''
+    def planOutput = project.findProperty('planOutput') ?: ''
+    def planFormat = project.findProperty('planFormat') ?: 'auto'
+
+    args = ["--${planFormat}", planInput, planOutput]
+
+    jvmArgs(
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.nio=ALL-UNNAMED"
+    )
+}
+
+tasks.register("runHarness", JavaExec) {
+    group = "performance"
+    description = "Run the OpenLineage Spark performance harness. " +
+        "Set -PolJar=<path> to specify the OL shadow JAR to benchmark."
+
+    classpath = sourceSets.main.runtimeClasspath + configurations.olRuntime +
+        files(bridgeJarTask.map { it.outputs.files.singleFile })
+    mainClass = "io.openlineage.spark.harness.HarnessLauncher"
+
+    def olVersion = project.findProperty('olVersion') ?: 'dev'
+    systemProperties = [
+        "spark.version": spark,
+        "scala.binary.version": scala,
+        "ol.jar.path": olJarPath,
+        "harness.log.dir": layout.projectDirectory.dir("logs").asFile.absolutePath,
+        "harness.test": "gcp",
+        "dd.version": olVersion,
+    ]
+
+    environment(
+        "DD_PROFILING_START_DELAY": "1",
+        "DD_PROFILING_START_FORCE_FIRST": "true",
+    )
+
+    jvmArgs(["-Xmx4g"] + localJvmArgs)
+    attachDdAgentLocal(it)
+    attachAsyncProfiler(it, "flamegraph-gcp.html")
+}
+
+// ── Docker-based harness (Linux JVM — ddprof + JFR fully supported) ───────────
+//
+// Packages the harness as a fat JAR, builds a Docker image, and runs it in a
+// Linux container so the Datadog native profiler (ddprof) and JFR work correctly.
+// The OL JAR and dd-java-agent are mounted at runtime so they can be swapped
+// without rebuilding the image.
+//
+// Usage:
+//   ./gradlew :perf-harness:runSmokeDocker
+//   ./gradlew :perf-harness:runHarnessDocker -PolJar=../app/build/libs/...
+
+shadowJar {
+    dependsOn(bridgeJarTask)
+    archiveBaseName.set("ol-perf-harness")
+    archiveClassifier.set("all")
+    zip64 = true  // Spark has >65535 entries; ZIP64 required
+    mergeServiceFiles()
+    // Drop signature files — Spark's signed JARs break fat-JAR verification
+    exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
+    manifest {
+        attributes("Main-Class": "io.openlineage.spark.harness.HarnessLauncher")
+    }
+}
+
+def buildHarnessImageTask = tasks.register("buildHarnessImage", Exec) {
+    group = "performance"
+    description = "Build the ol-perf-harness Docker image from the fat JAR."
+    dependsOn(tasks.named("shadowJar"))
+    workingDir = projectDir
+    commandLine("docker", "build", "-t", "ol-perf-harness", "-f", "Dockerfile.harness", ".")
+}
+
+def registerDockerRunTask(taskName, taskDescription, testName, maxHeap, olJar, sparkVer, scalaVer) {
+    tasks.register(taskName, Exec) {
+        group = "performance"
+        description = taskDescription
+        dependsOn(tasks.named("buildHarnessImage"))
+
+        def olVersion = project.findProperty('olVersion') ?: 'dev'
+        def containerMem = (maxHeap == "-Xmx4g") ? "5g" : "3g"
+
+        doFirst {
+            def agentJar = configurations.ddAgent.resolvedConfiguration.resolvedArtifacts.first().file
+            def olJarAbs = file(olJar).absolutePath
+            def logsDir = layout.projectDirectory.dir("logs").asFile
+            logsDir.mkdirs()
+
+            def addOpens = [
+                "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+                "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+                "--add-opens=java.base/java.io=ALL-UNNAMED",
+                "--add-opens=java.base/java.net=ALL-UNNAMED",
+                "--add-opens=java.base/java.nio=ALL-UNNAMED",
+                "--add-opens=java.base/java.util=ALL-UNNAMED",
+                "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+                "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED",
+                "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+                "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+                "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+                "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
+                "--add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED",
+            ]
+
+            def cmd = [
+                "docker", "run", "--rm",
+                // host.docker.internal → macOS host (Docker Desktop) or host-gateway (Linux)
+                "--add-host=host.docker.internal:host-gateway",
+                "--memory=${containerMem}",
+                "-v", "${agentJar}:/harness/dd-java-agent.jar:ro",
+                "-v", "${olJarAbs}:/harness/ol.jar:ro",
+                // Mount logs dir so flamegraph-<testName>.html is written to the host
+                "-v", "${logsDir.absolutePath}:/tmp/harness-logs",
+                "ol-perf-harness",
+                // ── JVM flags ──────────────────────────────────────────────
+                "-javaagent:/harness/dd-java-agent.jar",
+                // async-profiler: CPU flamegraph at 1ms interval
+                "-agentpath:/harness/async-profiler/lib/libasyncProfiler.so=start,event=cpu,interval=1ms,file=/tmp/harness-logs/flamegraph-${testName}.html,flamegraph",
+                maxHeap,
+                "-Djdk.attach.allowAttachSelf=true",
+            ] + addOpens + [
+                // ── Datadog profiler (ddprof enabled — we're on Linux) ──────
+                "-Ddd.profiling.enabled=true",
+                "-Ddd.profiling.ddprof.enabled=true",
+                "-Ddd.profiling.allocation.enabled=true",
+                "-Ddd.profiling.heap.enabled=true",
+                "-Ddd.profiling.start.delay=1",
+                "-Ddd.profiling.start.force.first=true",
+                "-Ddd.profiling.upload.period=5",
+                "-Ddd.service=ol-perf-harness",
+                "-Ddd.env=perf-test",
+                "-Ddd.version=${olVersion}",
+                "-Ddd.trace.enabled=true",
+                "-Ddd.integration.spark.enabled=false",
+                "-Ddd.integration.grpc.enabled=false",
+                // Agent is on the macOS host, exposed at port 8128
+                "-Ddd.agent.host=host.docker.internal",
+                "-Ddd.agent.port=8128",
+                // ── Harness config ─────────────────────────────────────────
+                "-Dspark.version=${sparkVer}",
+                "-Dscala.binary.version=${scalaVer}",
+                "-Dol.jar.path=/harness/ol.jar",
+                "-Dharness.log.dir=/tmp/harness-logs",
+                "-Dharness.test=${testName}",
+                // 25s: start.delay(3) + upload.period(5) + ddprof flush margin
+                "-Dharness.profiler.wait.ms=25000",
+                // ── Classpath + main class ─────────────────────────────────
+                "-cp", "/harness/harness.jar:/harness/ol.jar",
+                "io.openlineage.spark.harness.HarnessLauncher",
+            ]
+            commandLine(cmd)
+            logger.lifecycle("Docker harness: test=${testName}, OL JAR=${olJarAbs}")
+        }
+    }
+}
+
+registerDockerRunTask(
+    "runSmokeDocker",
+    "Run the smoke test in Docker (Linux — ddprof + JFR profiling enabled).",
+    "smoke",
+    "-Xmx2g",
+    olJarPath, spark, scala
+)
+
+registerDockerRunTask(
+    "runHarnessDocker",
+    "Run the full GCP pipeline benchmark in Docker (Linux — ddprof + JFR profiling enabled).",
+    "gcp",
+    "-Xmx4g",
+    olJarPath, spark, scala
+)
+// ─────────────────────────────────────────────────────────────────────────────
