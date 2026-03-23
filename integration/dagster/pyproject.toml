@@ -1,0 +1,50 @@
+[build-system]
+requires = ["uv_build>=0.9.4,<0.11.0"]
+build-backend = "uv_build"
+
+[project]
+name = "openlineage-dagster"
+version = "1.46.0"
+description = "OpenLineage integration with Dagster"
+readme = "README.md"
+authors = [{name = "OpenLineage"}]
+requires-python = ">=3.10"
+keywords = ["openlineage", "dagster", "lineage"]
+dependencies = [
+    "openlineage-python==1.46.0",
+    "dagster>=1.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov",
+    "ruff",
+    "mypy>=0.9.6",
+    "dagster-webserver",
+    "dagster-duckdb",
+]
+
+[tool.uv.sources]
+openlineage-python = { path = "../../client/python", editable = true }
+
+[tool.uv.build-backend]
+module-name = "openlineage"
+namespace = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short -p no:warnings"
+
+[tool.ruff]
+line-length = 110
+lint.select = ["F", "E", "W", "I001"]
+target-version = "py310"
+src = ["src", "tests"]
+namespace-packages = ["src/openlineage/dagster"]
+
+[tool.mypy]
+ignore_missing_imports = true

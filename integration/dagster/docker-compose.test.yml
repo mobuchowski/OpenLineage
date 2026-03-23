@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  dagster:
+    build:
+      context: ../..
+      dockerfile: integration/dagster/Dockerfile.test
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./output:/output
+    environment:
+      - OPENLINEAGE_CONFIG={"transport":{"type":"file","log_file_path":"/output/ol-events.ndjson"}}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/server_info"]
+      interval: 10s
+      timeout: 5s
+      retries: 12

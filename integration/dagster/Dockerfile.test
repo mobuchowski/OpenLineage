@@ -1,0 +1,34 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install uv
+RUN pip install uv --quiet
+
+# Copy the OpenLineage Python client and dagster integration
+COPY client/python /app/openlineage-client
+COPY integration/dagster /app/openlineage-dagster
+
+# Install the client first (so the dagster package's openlineage-python dep is satisfied)
+RUN uv pip install --system /app/openlineage-client
+# Install the dagster integration; --no-sources ignores [tool.uv.sources] path overrides
+# since the client is already installed above
+RUN uv pip install --system --no-sources "/app/openlineage-dagster[dev]"
+
+# Copy the test project
+COPY integration/dagster/tests/dagster_test_project /app/dagster_project
+
+WORKDIR /app/dagster_project
+
+# Create output directory for lineage events
+RUN mkdir -p /output
+
+# Configure OpenLineage file transport
+ENV OPENLINEAGE__TRANSPORT__TYPE=file
+ENV OPENLINEAGE__TRANSPORT__LOG_FILE_PATH=/output/ol-events.ndjson
+ENV OPENLINEAGE__TRANSPORT__APPEND=true
+
+# Expose Dagster webserver port
+EXPOSE 3000
+
+CMD ["dagster", "dev", "-f", "definitions.py", "--host", "0.0.0.0", "--port", "3000"]
