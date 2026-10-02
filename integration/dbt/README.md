@@ -74,6 +74,8 @@ Additional table and column level metadata will be available if `catalog.json`, 
 
 If you need to send events without running the job you can use the command `dbt-ol send-events`, it will send the metadata of your last run without running the job.
 
+The overall run is reported as `FAIL` when any recorded model or test event failed. Failed events include dbt's error messages when available in `run_results.json`. Warning-only test results do not fail the overall run. The `send-events` command's exit code does not reflect the outcome of the earlier dbt run.
+
 ## Development
 
 For development setup instructions, see the [Python development setup guide](https://openlineage.io/docs/client/python/development/setup).

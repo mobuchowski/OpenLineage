@@ -24,6 +24,7 @@ from openlineage.client.facet_v2 import (
     data_quality_assertions_dataset,
     datasource_dataset,
     documentation_dataset,
+    error_message_run,
     external_query_run,
     job_type_job,
     output_statistics_output_dataset,
@@ -420,6 +421,7 @@ class DbtArtifactProcessor:
                     Job(namespace=self.job_namespace, name=job_name, facets=job_facets),
                     input_datasets,
                     output_dataset,
+                    error_message=run.get("message"),
                 )
             )
         return events
@@ -430,6 +432,17 @@ class DbtArtifactProcessor:
         completed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         assertions = self.parse_assertions(context, nodes)
+        test_error_messages: dict[str, list[str]] = collections.defaultdict(list)
+        for result in context.run_results["results"]:
+            if not result["unique_id"].startswith("test.") or result["status"] not in (
+                "fail",
+                "error",
+                "runtime error",
+            ):
+                continue
+            if message := result.get("message"):
+                for parent_id in context.manifest.get("parent_map", {}).get(result["unique_id"], []):
+                    test_error_messages[parent_id].append(message)
 
         events = DbtEvents()
         manifest_nodes = {**context.manifest["nodes"], **context.manifest["sources"]}
@@ -507,6 +520,7 @@ class DbtArtifactProcessor:
                         )
                     ],
                     None,
+                    error_message="\n".join(test_error_messages[unique_id]) or None,
                 )
             )
 
@@ -565,6 +579,7 @@ class DbtArtifactProcessor:
                     Job(namespace=self.job_namespace, name=run["unique_id"], facets=job_facets_per_test),
                     inputs,
                     None,
+                    error_message=run.get("message"),
                 )
             )
 
@@ -697,6 +712,7 @@ class DbtArtifactProcessor:
         job: Job,
         inputs: list[InputDataset],
         output: OutputDataset | None,
+        error_message: str | None = None,
     ) -> DbtRunResult | None:
         start = RunEvent(
             eventType=RunState.START,
@@ -721,6 +737,18 @@ class DbtArtifactProcessor:
                 ),
             )
         elif status == "error":
+            if error_message:
+                # START and FAIL otherwise share the same Run instance. Copy it so
+                # failure details only appear on the terminal event.
+                run = attr.evolve(
+                    run,
+                    facets={
+                        **(run.facets or {}),
+                        "errorMessage": error_message_run.ErrorMessageRunFacet(
+                            message=error_message, programmingLanguage="sql"
+                        ),
+                    },
+                )
             return DbtRunResult(
                 start,
                 fail=RunEvent(

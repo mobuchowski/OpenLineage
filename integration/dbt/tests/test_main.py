@@ -1,11 +1,80 @@
 # Copyright 2018-2026 contributors to the OpenLineage project
 # SPDX-License-Identifier: Apache-2.0
 import json
+import shutil
+from pathlib import Path
 from unittest import mock
 
 import pytest
+from openlineage.client.event_v2 import RunState
 from openlineage.common.provider.dbt.utils import CONSUME_STRUCTURED_LOGS_COMMAND_OPTION, PRODUCER
-from openlineage.dbt import consume_structured_logs, main
+from openlineage.dbt import consume_local_artifacts, consume_structured_logs, main
+
+
+@pytest.mark.parametrize(
+    "fixture_name, test_status, args, dbt_return_code, expected_state",
+    [
+        ("fail", None, ["send-events"], 0, RunState.FAIL),
+        ("test", None, ["send-events"], 0, RunState.FAIL),
+        ("test", None, ["--debug", "send-events"], 0, RunState.FAIL),
+        ("build", None, ["send-events"], 0, RunState.COMPLETE),
+        ("singular_test", "error", ["send-events"], 0, RunState.FAIL),
+        ("singular_test", "warn", ["send-events"], 0, RunState.COMPLETE),
+        ("singular_test", "pass", ["send-events"], 0, RunState.COMPLETE),
+        ("build", None, ["build"], 2, RunState.FAIL),
+        ("build", None, ["build"], 0, RunState.COMPLETE),
+    ],
+)
+def test_local_artifacts_run_outcome(
+    fixture_name, test_status, args, dbt_return_code, expected_state, monkeypatch, tmp_path
+):
+    fixture_dir = Path(__file__).parents[2] / "common" / "tests" / "dbt" / fixture_name
+    project_dir = tmp_path / "project"
+    shutil.copytree(fixture_dir, project_dir)
+    if test_status:
+        results_path = project_dir / "target" / "run_results.json"
+        results = json.loads(results_path.read_text())
+        results["results"][1]["status"] = test_status
+        results_path.write_text(json.dumps(results))
+
+    monkeypatch.setattr("os.environ", {"DBT_PROFILES_DIR": str(project_dir)})
+    client = mock.MagicMock()
+    monkeypatch.setattr("openlineage.dbt.OpenLineageClient", mock.MagicMock(return_value=client))
+    process = mock.MagicMock()
+    process.__enter__.return_value = process
+    process.wait.return_value = dbt_return_code
+    popen = mock.MagicMock(return_value=process)
+    monkeypatch.setattr("openlineage.dbt.subprocess.Popen", popen)
+    monkeypatch.setattr("openlineage.dbt.time.time", lambda: 0)
+
+    return_code = consume_local_artifacts(
+        args=args,
+        target=None,
+        target_path=None,
+        project_dir=str(project_dir),
+        profile_name=None,
+        model_selector=None,
+        models=[],
+    )
+
+    events = [call.args[0] for call in client.emit.call_args_list]
+    assert events[0].eventType == RunState.START
+    assert events[-1].eventType == expected_state
+    assert events[0].run.runId == events[-1].run.runId
+    assert events[0].job == events[-1].job
+    assert return_code == dbt_return_code
+    if "send-events" in args:
+        popen.assert_not_called()
+    else:
+        popen.assert_called_once()
+    client.close.assert_called_once_with(timeout=30)
+    if expected_state == RunState.FAIL and "send-events" in args:
+        summary = events[-1].run.facets["errorMessage"].message
+        for event in events[1:-1]:
+            if event.eventType == RunState.FAIL and "errorMessage" in event.run.facets:
+                assert f"{event.job.name}: {event.run.facets['errorMessage'].message}" in summary
+    else:
+        assert "errorMessage" not in events[-1].run.facets
 
 
 @pytest.mark.parametrize(

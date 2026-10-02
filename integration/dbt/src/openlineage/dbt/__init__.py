@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from openlineage.client.client import OpenLineageClient
 from openlineage.client.event_v2 import Job, Run, RunEvent, RunState
-from openlineage.client.facet_v2 import job_type_job
+from openlineage.client.facet_v2 import error_message_run, job_type_job
 from openlineage.client.uuid import generate_new_uuid
 from openlineage.common.provider.dbt import (
     DbtLocalArtifactProcessor,
@@ -368,7 +368,9 @@ def consume_local_artifacts(
         logger.info(e)
         events = []
 
-    if return_code == 0:
+    failed_events = [event for event in events if event.eventType == RunState.FAIL]
+    # send-events has no dbt subprocess exit code; use the recorded node outcomes.
+    if return_code == 0 and not failed_events:
         terminal_event = dbt_run_event_end(
             run_id=dbt_run_metadata.run_id,
             job_namespace=dbt_run_metadata.job_namespace,
@@ -382,6 +384,18 @@ def consume_local_artifacts(
             job_name=dbt_run_metadata.job_name,
             parent_run_metadata=parent_run_metadata,
         )
+        error_messages = [
+            f"{event.job.name}: {event.run.facets['errorMessage'].message}"
+            for event in failed_events
+            if "errorMessage" in event.run.facets
+        ]
+        if error_messages:
+            terminal_event.run.facets = {
+                **(terminal_event.run.facets or {}),
+                "errorMessage": error_message_run.ErrorMessageRunFacet(
+                    message="\n".join(error_messages), programmingLanguage="sql"
+                ),
+            }
 
     if events:
         # Pass some run facets from extracted dbt events to wrapping start and stop events

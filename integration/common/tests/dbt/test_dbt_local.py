@@ -11,6 +11,7 @@ from unittest import mock
 import attr
 import pytest
 from openlineage.client import set_producer
+from openlineage.client.event_v2 import RunState
 from openlineage.client.facet_v2 import column_lineage_dataset
 from openlineage.common.provider.dbt.local import (
     DbtLocalArtifactProcessor,
@@ -24,6 +25,60 @@ from openlineage.common.provider.dbt.utils import (
 from openlineage.common.test import match
 
 CURRENT_DIR = str(Path(__file__).absolute().parent)
+
+
+@pytest.mark.parametrize("fixture_name", ["fail", "test", "no_test_metadata", "singular_test"])
+def test_failed_artifact_events_include_error_messages(fixture_name, monkeypatch):
+    path = str(Path(CURRENT_DIR) / fixture_name)
+    processor = DbtLocalArtifactProcessor(
+        producer="https://github.com/OpenLineage/OpenLineage/tree/0.0.1/integration/dbt",
+        job_namespace="job-namespace",
+        project_dir=path,
+        dbt_command_line=["dbt-ol", "send-events", "--profiles-dir", path],
+    )
+    manifest, results, profile, catalog = processor.get_dbt_metadata()
+    failed_results = [r for r in results["results"] if r["status"] in {"fail", "error"}]
+    for result in failed_results:
+        result["message"] = f"Failure in {result['unique_id']}"
+        if fixture_name == "singular_test":
+            manifest["nodes"][result["unique_id"]]["config"]["severity"] = "error"
+    monkeypatch.setattr(processor, "get_dbt_metadata", lambda: (manifest, results, profile, catalog))
+
+    events = processor.parse()
+
+    assert events.fails
+    expected_messages = {r["message"] for r in failed_results}
+    actual_messages = set()
+    for event in events.fails:
+        facet = event.run.facets["errorMessage"]
+        assert facet.programmingLanguage == "sql"
+        actual_messages.update(facet.message.splitlines())
+    assert actual_messages == expected_messages
+    for event in events.starts + events.completes:
+        assert "errorMessage" not in event.run.facets
+
+
+@pytest.mark.parametrize("message", [None, ""])
+@pytest.mark.parametrize("fixture_name", ["fail", "test", "singular_test"])
+def test_failed_artifact_without_message_can_be_emitted(message, fixture_name, monkeypatch):
+    path = str(Path(CURRENT_DIR) / fixture_name)
+    processor = DbtLocalArtifactProcessor(
+        producer="https://github.com/OpenLineage/OpenLineage/tree/0.0.1/integration/dbt",
+        job_namespace="job-namespace",
+        project_dir=path,
+        dbt_command_line=["dbt-ol", "send-events", "--profiles-dir", path],
+    )
+    manifest, results, profile, catalog = processor.get_dbt_metadata()
+    for result in results["results"]:
+        result["message"] = message
+    monkeypatch.setattr(processor, "get_dbt_metadata", lambda: (manifest, results, profile, catalog))
+
+    events = processor.parse()
+
+    assert events.fails
+    for event in events.fails:
+        assert event.eventType == RunState.FAIL
+        assert "errorMessage" not in event.run.facets
 
 
 @pytest.fixture(scope="session", autouse=True)
