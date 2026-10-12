@@ -12,6 +12,8 @@ import io.openlineage.spark.agent.lifecycle.plan.catalog.UnsupportedCatalogExcep
 import io.openlineage.spark.agent.util.PathUtils;
 import io.openlineage.spark.agent.util.SparkSessionUtils;
 import io.openlineage.spark.api.OpenLineageContext;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
@@ -28,23 +30,54 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation;
  *
  * <p>This is required because Iceberg's rewrite actions ({@code rewrite_data_files}, {@code
  * rewrite_position_delete_files}, …) do not write through the table's own catalog. They stage the
- * table in {@code SparkTableCache} under a random UUID and then read and write through {@code
- * org.apache.iceberg.spark.SparkCachedTableCatalog}, which Iceberg silently registers as {@code
- * spark.sql.catalog.default_cache_iceberg}. That catalog implements {@link TableCatalog} directly -
- * it is neither a {@code SparkCatalog} nor a {@code SparkSessionCatalog} - so {@link
- * IcebergHandler#isClass(TableCatalog)} rejects it and the whole catalog-based resolution fails,
- * leaving the emitted event with no datasets at all.
+ * table in {@code SparkTableCache} under a random key and then read and write through a catalog
+ * that Iceberg silently registers for that cache:
  *
- * <p>The relation itself still carries everything needed: {@code relation.table()} is a {@link
- * SparkTable} wrapping the real Iceberg {@link Table}, whose {@code name()} is the fully qualified
- * name assigned by the catalog that originally loaded it (for example {@code
- * prod_catalog.namespace.table}). That is used to find the owning catalog and delegate to {@link
- * IcebergHandler}, so a compaction job reports exactly the same dataset identifier - symlinks
- * included - as a regular write to the same table.
+ * <ul>
+ *   <li>{@code org.apache.iceberg.spark.SparkCachedTableCatalog} ({@code default_cache_iceberg}),
+ *       serving {@link SparkTable}s - Iceberg's Spark 3.x and 4.0 modules;
+ *   <li>{@code org.apache.iceberg.spark.SparkRewriteTableCatalog} ({@code
+ *       default_rewrite_catalog}), serving {@code SparkRewriteTable}s - Iceberg's Spark 4.1 module,
+ *       from Iceberg 1.11 on.
+ * </ul>
+ *
+ * <p>Either catalog implements {@link TableCatalog} directly - it is neither a {@code SparkCatalog}
+ * nor a {@code SparkSessionCatalog} - so {@link IcebergHandler#isClass(TableCatalog)} rejects it
+ * and the whole catalog-based resolution fails, leaving the emitted event with no datasets at all.
+ *
+ * <p>The relation itself still carries everything needed: {@code relation.table()} wraps the real
+ * Iceberg {@link Table}, whose {@code name()} is the fully qualified name assigned by the catalog
+ * that originally loaded it (for example {@code prod_catalog.namespace.table}). That is used to
+ * find the owning catalog and delegate to {@link IcebergHandler}, so a compaction job reports
+ * exactly the same dataset identifier - symlinks included - as a regular write to the same table.
  */
 @Slf4j
 public class IcebergRelationHandler implements RelationHandler {
   private static final String SPARK_TABLE_CLASS_NAME = "org.apache.iceberg.spark.source.SparkTable";
+
+  /**
+   * Served by {@code SparkRewriteTableCatalog}. It extends Iceberg's package-private {@code
+   * BaseSparkTable} rather than {@link SparkTable} and does not exist in the Iceberg version this
+   * module compiles against, so it is matched by name and unwrapped through its public {@code
+   * table()} accessor. Matching the exact class keeps other Iceberg wrappers - changelog or
+   * metadata tables, which are not the base table - out of this handler.
+   */
+  private static final String REWRITE_TABLE_CLASS_NAME =
+      "org.apache.iceberg.spark.source.SparkRewriteTable";
+
+  /** The {@code table()} accessor, looked up once per loaded class rather than per relation. */
+  private static final ClassValue<Optional<Method>> TABLE_ACCESSOR =
+      new ClassValue<Optional<Method>>() {
+        @Override
+        protected Optional<Method> computeValue(Class<?> type) {
+          try {
+            return Optional.of(type.getMethod("table"));
+          } catch (NoSuchMethodException e) {
+            log.warn("{} has no table() accessor; its datasets cannot be resolved", type.getName());
+            return Optional.empty();
+          }
+        }
+      };
 
   /** A table name that can be split into a catalog and a table has at least those two parts. */
   private static final int MIN_NAME_PARTS = 2;
@@ -68,13 +101,20 @@ public class IcebergRelationHandler implements RelationHandler {
 
   @Override
   public boolean isClass(DataSourceV2Relation relation) {
-    return relation.table() instanceof SparkTable;
+    return icebergTable(relation.table()).isPresent();
   }
 
   @Override
   public DatasetIdentifier getDatasetIdentifier(DataSourceV2Relation relation) {
-    Table icebergTable = ((SparkTable) relation.table()).table();
-    return getOwningCatalog(relation)
+    Table icebergTable =
+        icebergTable(relation.table())
+            .orElseThrow(
+                () ->
+                    new UnsupportedCatalogException(
+                        String.format(
+                            "Relation over %s does not wrap an Iceberg table",
+                            relation.table().getClass().getName())));
+    return owningCatalog(icebergTable)
         .flatMap(owner -> resolveThroughOwningCatalog(relation, icebergTable, owner))
         .orElseGet(() -> fromTableLocation(icebergTable));
   }
@@ -87,11 +127,15 @@ public class IcebergRelationHandler implements RelationHandler {
    */
   @Override
   public Optional<OwningCatalog> getOwningCatalog(DataSourceV2Relation relation) {
-    if (!(relation.table() instanceof SparkTable) || !context.getSparkSession().isPresent()) {
+    return icebergTable(relation.table()).flatMap(this::owningCatalog);
+  }
+
+  private Optional<OwningCatalog> owningCatalog(Table icebergTable) {
+    if (!context.getSparkSession().isPresent()) {
       return Optional.empty();
     }
 
-    String tableName = ((SparkTable) relation.table()).table().name();
+    String tableName = icebergTable.name();
     if (tableName == null || tableName.contains("/")) {
       return Optional.empty();
     }
@@ -103,14 +147,41 @@ public class IcebergRelationHandler implements RelationHandler {
 
     // Only the catalog segment is taken from the qualified name; the remaining segments are split
     // into namespace and table exactly as Spark parses a multipart identifier. The relation's own
-    // identifier is deliberately not used - for the cached-catalog writes this handler exists for,
-    // it is the SparkTableCache UUID key rather than the table's real identifier.
+    // identifier is deliberately not used - for the rewrite-catalog writes this handler exists for,
+    // it is the SparkTableCache key rather than the table's real identifier.
     Identifier identifier =
         Identifier.of(Arrays.copyOfRange(parts, 1, parts.length - 1), parts[parts.length - 1]);
 
     return SparkSessionUtils.catalog(context.getSparkSession().get(), parts[0])
         .filter(TableCatalog.class::isInstance)
         .map(catalog -> OwningCatalog.of((TableCatalog) catalog, identifier));
+  }
+
+  /**
+   * The Iceberg table wrapped by a {@link SparkTable} or a {@code SparkRewriteTable}; empty for any
+   * other table, including a {@link SparkTable} that wraps none.
+   */
+  static Optional<Table> icebergTable(org.apache.spark.sql.connector.catalog.Table sparkTable) {
+    if (sparkTable instanceof SparkTable) {
+      return Optional.ofNullable(((SparkTable) sparkTable).table());
+    }
+    if (sparkTable == null || !REWRITE_TABLE_CLASS_NAME.equals(sparkTable.getClass().getName())) {
+      return Optional.empty();
+    }
+    return TABLE_ACCESSOR
+        .get(sparkTable.getClass())
+        .flatMap(accessor -> invokeTableAccessor(accessor, sparkTable));
+  }
+
+  private static Optional<Table> invokeTableAccessor(
+      Method accessor, org.apache.spark.sql.connector.catalog.Table sparkTable) {
+    try {
+      Object table = accessor.invoke(sparkTable);
+      return table instanceof Table ? Optional.of((Table) table) : Optional.empty();
+    } catch (IllegalAccessException | InvocationTargetException e) {
+      log.debug("Could not unwrap iceberg table from {}", sparkTable.getClass().getName(), e);
+      return Optional.empty();
+    }
   }
 
   /**

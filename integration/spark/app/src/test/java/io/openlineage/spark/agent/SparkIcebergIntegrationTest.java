@@ -803,11 +803,14 @@ class SparkIcebergIntegrationTest {
   @SuppressWarnings("PMD.JUnitTestContainsTooManyAsserts")
   void testRewriteDataFilesReportsCompactedTable() {
     // the job name of a plain write to the table, going through its own catalog - as opposed to the
-    // compaction's append, which goes through SparkCachedTableCatalog and so is named after it
+    // compaction's append, which goes through Iceberg's rewrite catalog and so is named after it
     String plainWriteJobName =
         "iceberg_integration_test.append_data.spark_catalog_default_compaction_target";
-    // the catalog Iceberg registers for its table cache, which the compaction writes through
-    String cacheCatalogName = "default_cache_iceberg";
+    // the catalog Iceberg registers for its table cache, which the compaction writes through:
+    // SparkCachedTableCatalog up to Spark 4.0, SparkRewriteTableCatalog on Spark 4.1 (Iceberg
+    // 1.11+)
+    List<String> rewriteCatalogNames =
+        Arrays.asList("default_cache_iceberg", "default_rewrite_catalog");
 
     clearTables("compaction_target", "compaction_marker");
 
@@ -838,16 +841,16 @@ class SparkIcebergIntegrationTest {
     getEventsEmittedWithJobName(mockServer, "compaction_marker");
     List<RunEvent> events = getEventsEmitted(mockServer);
 
-    // The append that writes the compacted files is the one going through
-    // SparkCachedTableCatalog, so it is named after that catalog rather than the table's own.
-    // Selecting on the cache catalog's name is what makes this test specific: every other write
+    // The append that writes the compacted files is the one going through the rewrite catalog,
+    // so it is named after that catalog rather than the table's own.
+    // Selecting on the rewrite catalog's name is what makes this test specific: every other write
     // here - the inserts, whose events routinely land asynchronously after clearRequests, and the
     // marker table's own append - also emits append_data, and any of those would otherwise
     // satisfy the assertions below on their own.
     List<RunEvent> compactionEvents =
         events.stream()
             .filter(e -> e.getJob().getName().contains("append_data"))
-            .filter(e -> e.getJob().getName().contains(cacheCatalogName))
+            .filter(e -> rewriteCatalogNames.stream().anyMatch(e.getJob().getName()::contains))
             .filter(e -> e.getEventType() == RunEvent.EventType.COMPLETE)
             .collect(Collectors.toList());
 
@@ -856,7 +859,7 @@ class SparkIcebergIntegrationTest {
         .isNotEmpty()
         .allSatisfy(e -> assertThat(e.getOutputs()).isNotEmpty());
 
-    // and the reported dataset must be the real table, not the cache catalog's UUID key
+    // and the reported dataset must be the real table, not the rewrite catalog's cache key
     assertThat(
             compactionEvents.stream()
                 .flatMap(e -> e.getOutputs().stream())

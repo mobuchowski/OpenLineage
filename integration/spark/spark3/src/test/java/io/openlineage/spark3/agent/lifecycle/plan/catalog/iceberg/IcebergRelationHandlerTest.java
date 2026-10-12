@@ -27,12 +27,14 @@ import java.util.List;
 import java.util.Optional;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.spark.SparkCachedTableCatalog;
+import org.apache.iceberg.spark.source.SparkRewriteTable;
 import org.apache.iceberg.spark.source.SparkTable;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.catalog.CatalogPlugin;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation;
+import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
@@ -54,10 +56,37 @@ class IcebergRelationHandlerTest {
 
   @Test
   void testIsClassForIcebergRelation() {
+    assertThat(handler.isClass(relationOf(TABLE_LOCATION, QUALIFIED_NAME))).isTrue();
+  }
+
+  /**
+   * Iceberg 1.11's Spark 4.1 module serves rewrite actions a SparkRewriteTable, not a SparkTable.
+   */
+  @Test
+  void testIsClassForRewriteTableRelation() {
+    assertThat(handler.isClass(rewriteRelationOf(TABLE_LOCATION, QUALIFIED_NAME))).isTrue();
+  }
+
+  /**
+   * Only SparkRewriteTable is unwrapped reflectively. Another table exposing a {@code table()}
+   * accessor - an Iceberg changelog or metadata table, say - is not the base table.
+   */
+  @Test
+  void testIsClassRejectsOtherTablesWithTableAccessor() {
+    Table icebergTable = mock(Table.class);
+    DataSourceV2Relation relation = mock(DataSourceV2Relation.class, RETURNS_DEEP_STUBS);
+    when(relation.table()).thenReturn(new WrapperWithTableAccessor(icebergTable));
+
+    assertThat(handler.isClass(relation)).isFalse();
+  }
+
+  /** Used to be claimed and then fail with a NullPointerException in getDatasetIdentifier. */
+  @Test
+  void testIsClassRejectsSparkTableWithoutIcebergTable() {
     DataSourceV2Relation relation = mock(DataSourceV2Relation.class, RETURNS_DEEP_STUBS);
     when(relation.table()).thenReturn(mock(SparkTable.class));
 
-    assertThat(handler.isClass(relation)).isTrue();
+    assertThat(handler.isClass(relation)).isFalse();
   }
 
   @Test
@@ -183,6 +212,31 @@ class IcebergRelationHandlerTest {
     assertThat(owner.get().getIdentifier()).isEqualTo(Identifier.of(new String[] {"db"}, "tbl"));
   }
 
+  /** A rewrite on Spark 4.1 resolves to the same owning catalog and identifier as on Spark 4.0. */
+  @Test
+  void testGetOwningCatalogForRewriteTable() {
+    TableCatalog owning = mock(TableCatalog.class);
+    withSessionCatalog(context, "c", owning);
+
+    Optional<RelationHandler.OwningCatalog> owner =
+        handler.getOwningCatalog(rewriteRelationOf(TABLE_LOCATION, QUALIFIED_NAME));
+
+    assertThat(owner).isPresent();
+    assertThat(owner.get().getCatalog()).isSameAs(owning);
+    assertThat(owner.get().getIdentifier()).isEqualTo(Identifier.of(new String[] {"db"}, "tbl"));
+  }
+
+  @Test
+  void testGetDatasetIdentifierForRewriteTableFallsBackToTableLocation() {
+    when(context.getSparkSession()).thenReturn(Optional.empty());
+
+    DatasetIdentifier di =
+        handler.getDatasetIdentifier(rewriteRelationOf(TABLE_LOCATION, QUALIFIED_NAME));
+
+    assertThat(di.getName()).isEqualTo(TABLE_PATH);
+    assertThat(di.getNamespace()).isEqualTo("file");
+  }
+
   /** A catalog registered under a name that is not a {@link TableCatalog} cannot be resolved. */
   @Test
   void testGetOwningCatalogRejectsNonTableCatalog() {
@@ -200,16 +254,57 @@ class IcebergRelationHandlerTest {
   }
 
   private DataSourceV2Relation relationOf(String location, String name) {
+    Table icebergTable = icebergTable(location, name);
+    SparkTable sparkTable = mock(SparkTable.class);
+    when(sparkTable.table()).thenReturn(icebergTable);
+    return relationOver(sparkTable);
+  }
+
+  private DataSourceV2Relation rewriteRelationOf(String location, String name) {
+    return relationOver(new SparkRewriteTable(icebergTable(location, name)));
+  }
+
+  private static Table icebergTable(String location, String name) {
     Table icebergTable = mock(Table.class);
     when(icebergTable.location()).thenReturn(location);
     when(icebergTable.name()).thenReturn(name);
+    return icebergTable;
+  }
 
-    SparkTable sparkTable = mock(SparkTable.class);
-    when(sparkTable.table()).thenReturn(icebergTable);
-
+  private static DataSourceV2Relation relationOver(
+      org.apache.spark.sql.connector.catalog.Table table) {
     DataSourceV2Relation relation = mock(DataSourceV2Relation.class, RETURNS_DEEP_STUBS);
-    when(relation.table()).thenReturn(sparkTable);
+    when(relation.table()).thenReturn(table);
     return relation;
+  }
+
+  /** A Spark table outside Iceberg's rewrite path that still exposes a {@code table()} accessor. */
+  public static class WrapperWithTableAccessor
+      implements org.apache.spark.sql.connector.catalog.Table {
+    private final Table icebergTable;
+
+    WrapperWithTableAccessor(Table table) {
+      this.icebergTable = table;
+    }
+
+    public Table table() {
+      return icebergTable;
+    }
+
+    @Override
+    public String name() {
+      return "wrapper";
+    }
+
+    @Override
+    public StructType schema() {
+      return new StructType();
+    }
+
+    @Override
+    public java.util.Set<org.apache.spark.sql.connector.catalog.TableCapability> capabilities() {
+      return Collections.emptySet();
+    }
   }
 
   /** Builds a context whose factory contributes exactly the given relation handlers. */
