@@ -281,6 +281,9 @@ tasks.named("shadowJar", ShadowJar.class) {
     relocate('com.fasterxml.jackson', 'io.openlineage.spark.shaded.com.fasterxml.jackson') {
         exclude 'com.fasterxml.jackson.annotation.JsonIgnore'
         exclude 'com.fasterxml.jackson.annotation.JsonIgnoreProperties'
+        // Keep the nested $Value with its outer class: Scala reflection (used by Delta 4.1+) asserts that
+        // inner class names share the outer class prefix.
+        exclude 'com.fasterxml.jackson.annotation.JsonIgnoreProperties$*'
         exclude 'com.fasterxml.jackson.annotation.JsonIgnoreType'
     }
     // jackson-core 2.18+ ships FastDoubleParser as Java 21/22 multi-release classes that the
@@ -528,87 +531,92 @@ void addDependenciesToConfiguration(String configurationName, String spark, Stri
     }
 }
 
+// Connector artifacts are published per Spark minor version, so the registries below are keyed by
+// "major.minor" - bumping the patch version in the CI matrix must not silently drop connector tests.
+static String sparkMinor(String spark) {
+    return spark.substring(0, spark.lastIndexOf('.'))
+}
+
 List<Dependency> bigqueryDependencies(String spark, String scala) {
     final def registry = [
-            "3.2.4": [
+            "3.2": [
                 dependencies.create("com.google.cloud.spark:spark-3.2-bigquery:${bigqueryVersion}",
                         { transitive = false }
                 )
             ],
-            "3.3.4": [
+            "3.3": [
                 dependencies.create("com.google.cloud.spark:spark-3.3-bigquery:${bigqueryVersion}",
                         { transitive = false }
                 )
             ],
-            "3.4.4": [
+            "3.4": [
                 dependencies.create("com.google.cloud.spark:spark-3.4-bigquery:${bigqueryVersion}",
                         { transitive = false }
                 )
             ],
-            "3.5.6": [
+            "3.5": [
                 dependencies.create("com.google.cloud.spark:spark-3.5-bigquery:${bigqueryVersion}",
                         { transitive = false }
                 )
             ]
     ];
 
-    return registry.get(spark, [])
+    return registry.get(sparkMinor(spark), [])
 }
 
 List<Dependency> icebergDependencies(String spark, String scala) {
     def scalaVersion = scala == "2.12" ? "2.12.15" : "2.13.10"
 
     final def registry = [
-            "3.2.4": [
+            "3.2": [
                     dependencies.create("org.apache.iceberg:iceberg-spark-runtime-3.2_${scala}:1.4.3"),
                     dependencies.create("org.scala-lang:scala-library:${scalaVersion}"),
                     dependencies.create("org.scala-lang:scala-reflect:${scalaVersion}"),
                     dependencies.create("org.scala-lang.modules:scala-collection-compat_${scala}:2.11.0"),
             ],
-            "3.3.4": [
+            "3.3": [
                     dependencies.create("org.apache.iceberg:iceberg-spark-runtime-3.3_${scala}:1.6.0"),
                     dependencies.create("org.scala-lang:scala-library:${scalaVersion}"),
                     dependencies.create("org.scala-lang:scala-reflect:${scalaVersion}"),
                     dependencies.create("org.scala-lang.modules:scala-collection-compat_${scala}:2.11.0"),
             ],
-            "3.4.4": [
+            "3.4": [
                     dependencies.create("org.apache.iceberg:iceberg-spark-runtime-3.4_${scala}:1.6.0"),
                     dependencies.create("org.scala-lang:scala-library:${scalaVersion}"),
                     dependencies.create("org.scala-lang:scala-reflect:${scalaVersion}"),
                     dependencies.create("org.scala-lang.modules:scala-collection-compat_${scala}:2.11.0"),
             ],
-            "3.5.6": [
+            "3.5": [
                     dependencies.create("org.apache.iceberg:iceberg-spark-runtime-3.5_${scala}:1.6.0"),
                     dependencies.create("org.scala-lang:scala-library:${scalaVersion}"),
                     dependencies.create("org.scala-lang:scala-reflect:${scalaVersion}"),
                     dependencies.create("org.scala-lang.modules:scala-collection-compat_${scala}:2.12.0"),
+            ],
+            "4.0": [
+                    dependencies.create("org.apache.iceberg:iceberg-spark-runtime-4.0_${scala}:1.11.0"),
+            ],
+            "4.1": [
+                    dependencies.create("org.apache.iceberg:iceberg-spark-runtime-4.1_${scala}:1.11.0"),
             ]
     ]
 
-    return registry.get(spark, [])
+    return registry.get(sparkMinor(spark), [])
 }
 
 List<Dependency> deltaDependencies(String spark, String scala) {
+    // Delta 4.1+ publishes a separate artifact per Spark minor version (delta-spark_<spark>_<scala>).
     final def registry = [
-            "3.2.4": "1.1.0",
-            "3.3.4": "2.1.0",
-            "3.4.4": "2.4.0",
-            "3.5.6": "3.3.2",
-            "4.0.0": "4.0.0"
+            "3.2": "io.delta:delta-core_${scala}:1.1.0",
+            "3.3": "io.delta:delta-core_${scala}:2.1.0",
+            "3.4": "io.delta:delta-core_${scala}:2.4.0",
+            "3.5": "io.delta:delta-spark_${scala}:3.3.2",
+            "4.0": "io.delta:delta-spark_${scala}:4.0.0",
+            "4.1": "io.delta:delta-spark_4.1_${scala}:4.4.1",
+            "4.2": "io.delta:delta-spark_4.2_${scala}:4.4.1",
     ]
 
-    def delta = registry.get(spark)
-    if (delta == null) {
-        return []
-    } else if (delta.startsWith("1.") || delta.startsWith("2.")) {
-        return [
-                dependencies.create("io.delta:delta-core_${scala}:$delta")
-        ]
-    } else if (delta.startsWith("3.") || delta.startsWith("4.")) {
-        return [
-                dependencies.create("io.delta:delta-spark_${scala}:$delta")
-        ]
-    }
+    def delta = registry.get(sparkMinor(spark))
+    return delta == null ? [] : [dependencies.create(delta)]
 }
 
 List<Dependency> clickhouseDependencies(String spark, String scala) {
@@ -616,32 +624,31 @@ List<Dependency> clickhouseDependencies(String spark, String scala) {
     // and for Spark 4.x with Scala 2.13 only; tests are tagged with `clickhouse`
     // and excluded where no artifact is available.
     final def registry = [
-            "3.3.4": "0.10.0",
-            "3.4.4": "0.10.0",
-            "3.5.6": "0.10.0",
-            "4.0.0": "0.10.0",
+            "3.3": "0.10.0",
+            "3.4": "0.10.0",
+            "3.5": "0.10.0",
+            "4.0": "0.10.0",
     ]
 
-    def clickhouse = registry.get(spark)
+    def clickhouse = registry.get(sparkMinor(spark))
     if (clickhouse == null || (spark.startsWith("4.") && scala != "2.13")) {
         return []
     }
-    def shortSpark = spark.substring(0, spark.lastIndexOf('.'))
     return [
-            dependencies.create("com.clickhouse.spark:clickhouse-spark-runtime-${shortSpark}_${scala}:${clickhouse}")
+            dependencies.create("com.clickhouse.spark:clickhouse-spark-runtime-${sparkMinor(spark)}_${scala}:${clickhouse}")
     ]
 }
 
 List<Dependency> gcsDependencies(String spark, String scala) {
     final def registry = [
-            "2.4.8": "hadoop2-2.2.9",
-            "3.2.4": "hadoop3-2.2.9",
-            "3.3.4": "hadoop3-2.2.9",
-            "3.4.4": "hadoop3-2.2.9",
-            "3.5.6": "hadoop3-2.2.9",
+            "2.4": "hadoop2-2.2.9",
+            "3.2": "hadoop3-2.2.9",
+            "3.3": "hadoop3-2.2.9",
+            "3.4": "hadoop3-2.2.9",
+            "3.5": "hadoop3-2.2.9",
     ]
 
-    def gcs = registry.get(spark)
+    def gcs = registry.get(sparkMinor(spark))
     if (gcs == null) {
         return []
     }
@@ -654,14 +661,14 @@ List<Dependency> gcsDependencies(String spark, String scala) {
 
 List<Dependency> hadoopClientDependencies(String spark, String scala) {
     final def registry = [
-            "2.4.8": "2.10.2",
-            "3.2.4": "3.3.4",
-            "3.3.4": "3.3.2",
-            "3.4.4": "3.3.4",
-            "3.5.6": "3.3.4",
+            "2.4": "2.10.2",
+            "3.2": "3.3.4",
+            "3.3": "3.3.2",
+            "3.4": "3.3.4",
+            "3.5": "3.3.4",
     ]
 
-    def hadoopClient = registry.get(spark)
+    def hadoopClient = registry.get(sparkMinor(spark))
     if (hadoopClient == null) {
         return []
     }
@@ -677,7 +684,7 @@ List<Dependency> hadoopClientDependencies(String spark, String scala) {
 
 List<Dependency> additionalJars(String spark, String scala) {
     final def registry = [
-            "2.4.8": [
+            "2.4": [
                     dependencies.create("org.slf4j:slf4j-api:1.7.16"),
                     dependencies.create("org.slf4j:slf4j-log4j12:1.7.16"),
                     // 2.10.2 is the latest stable for Spark 2
@@ -700,25 +707,25 @@ List<Dependency> additionalJars(String spark, String scala) {
                         transitive = false
                     }),
             ],
-            "3.2.4": [
+            "3.2": [
                     dependencies.create("org.apache.spark:spark-mllib_${scala}:${spark}", {
                         transitive = false
                     }),
                     dependencies.create("org.apache.iceberg:iceberg-spark-runtime-3.2_${scala}:1.4.3")
             ],
-            "3.3.4": [
+            "3.3": [
                     dependencies.create("org.apache.spark:spark-mllib_${scala}:${spark}", {
                         transitive = false
                     }),
                     dependencies.create("org.apache.iceberg:iceberg-spark-runtime-3.3_${scala}:1.6.0")
             ],
-            "3.4.4": [
+            "3.4": [
                     dependencies.create("org.apache.spark:spark-mllib_${scala}:${spark}", {
                         transitive = false
                     }),
                     dependencies.create("org.apache.iceberg:iceberg-spark-runtime-3.4_${scala}:1.6.0")
             ],
-            "3.5.6": [
+            "3.5": [
                     dependencies.create("org.slf4j:slf4j-api:2.0.10"),
                     dependencies.create("org.slf4j:slf4j-reload4j:2.0.18"),
                     dependencies.create("org.apache.spark:spark-mllib_${scala}:${spark}", {
@@ -728,7 +735,7 @@ List<Dependency> additionalJars(String spark, String scala) {
             ],
     ]
 
-    return registry.get(spark, [])
+    return registry.get(sparkMinor(spark), [])
 }
 
 List<Dependency> runtimeOnlyDependencies(String spark, String scala) {

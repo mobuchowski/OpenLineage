@@ -667,7 +667,12 @@ class SparkIcebergIntegrationTest {
 
     assertThat(configFacet)
         .containsEntry("extraListeners", "io.openlineage.spark.agent.OpenLineageSparkListener")
-        .containsEntry("catalogClass", "org.apache.spark.sql.internal.CatalogImpl")
+        .containsEntry(
+            "catalogClass",
+            // Spark 4 moved the session catalog implementation into the "classic" package
+            System.getProperty(SPARK_VERSION).startsWith("4")
+                ? "org.apache.spark.sql.classic.Catalog"
+                : "org.apache.spark.sql.internal.CatalogImpl")
         .containsEntry(
             "extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions");
 

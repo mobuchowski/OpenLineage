@@ -33,7 +33,7 @@ includes:
 vars:
   # The newest CI-tested Spark/Scala combination. Alternative pairs: run
   # `task versions`, or see the matrix in .circleci/workflows/openlineage-spark.yml.
-  DEFAULT_SPARK: "4.0.0"
+  DEFAULT_SPARK: "4.0.4"
   DEFAULT_SCALA: "2.13"
 
 tasks:
