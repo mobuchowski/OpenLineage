@@ -63,6 +63,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.mockserver.integration.ClientAndServer;
 import org.mockserver.model.HttpRequest;
@@ -426,6 +427,10 @@ class SparkIcebergIntegrationTest {
   }
 
   @Test
+  @DisabledIfSystemProperty(
+      named = SPARK_VERSION,
+      matches = "4\\..*",
+      disabledReason = "Iceberg copy-on-write MERGE INTO lineage is incomplete on Spark 4.x")
   void testMergeIntoCow() {
     clearTables("events_cow", "updates_cow");
     spark.sql(

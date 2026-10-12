@@ -50,6 +50,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.mockserver.integration.ClientAndServer;
 import org.mockserver.model.HttpRequest;
@@ -187,6 +188,10 @@ class SparkDeltaIntegrationTest {
   }
 
   @Test
+  @DisabledIfSystemProperty(
+      named = "spark.version",
+      matches = "4\\.[12]\\..*",
+      disabledReason = "Delta saveAsTable output is missing on Spark 4.1+ (Delta 4.4)")
   void testDeltaSaveAsTable() {
     clearTables("movies");
     Dataset<Row> dataset =
