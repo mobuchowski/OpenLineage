@@ -23,6 +23,20 @@ parameters:
     default: "inactive"
 
 jobs:
+  cancel_superseded_main:
+    docker:
+      - image: cimg/python:3.10
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Cancel superseded automatic main workflows
+          command: python dev/cancel_superseded_main.py
+          environment:
+            PIPELINE_ID: << pipeline.id >>
+          # Set CIRCLE_TOKEN to a personal CircleCI API token in the release
+          # context. Without a token, cancellation is skipped and CI proceeds.
+
   # Determine the modules that have changed and trigger a series of workflow tasks as necessary.
   # We merge multiple workflows from files in the workflows subdirectory based on the changed
   # modules. A single module changed may require tests and builds in multiple downstream modules.
@@ -52,6 +66,9 @@ jobs:
       - image: cimg/python:3.10
     steps:
       - checkout
+      - run:
+          name: Test CI cancellation policy
+          command: python -m unittest discover -s dev/tests
       - github-cli/setup
       - run:
           name: Install yq
@@ -135,6 +152,13 @@ jobs:
 workflows:
   schedule_workflow:
     jobs:
+      - cancel_superseded_main:
+          context: release
+          filters:
+            branches:
+              only: main
+            tags:
+              ignore: /.*/
       - determine_changed_modules:
           context: pr
           filters:
