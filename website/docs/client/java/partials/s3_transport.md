@@ -24,8 +24,8 @@ to be emitted correctly.
 - `type` - string, must be `"s3"`. Required.
 - `endpoint` - string, the endpoint for S3 compliant service like MinIO, Ceph, etc. Optional
 - `bucketName` - string, the S3 bucket name. Required
-- `fileNamePrefix` - string, prefix for the event file names. It is separated from the timestamp with underscore. It can
-  include path and file name prefix. Optional.
+- `fileNamePrefix` - string, prefix for the event file names. It is separated from the rest of the name with an
+  underscore, unless it ends with `/`. It can include path and file name prefix. Optional.
 
 ##### Credentials
 
@@ -42,8 +42,10 @@ Refer to the documentation for details.
 #### Behavior
 
 - Events are serialized to JSON and stored in the specified S3 bucket.
-- Each event file is named based on its `eventTime`, converted to epoch milliseconds, with an optional prefix if
-  configured.
+- Each event file is named `<eventTime in epoch milliseconds>-<content hash>.json`, with an optional prefix if configured.
+  The content hash is the first 16 hex characters of the SHA-256 of the serialized event. It keeps different events with
+  the same `eventTime` from overwriting each other, while an identical event emitted twice is stored once. Names still
+  sort by `eventTime`.
 
 #### Examples
 

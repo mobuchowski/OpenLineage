@@ -10,7 +10,10 @@ import io.openlineage.client.OpenLineageClientException;
 import io.openlineage.client.OpenLineageClientUtils;
 import io.openlineage.client.transports.Transport;
 import java.net.URI;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Objects;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -20,14 +23,11 @@ import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import software.amazon.awssdk.services.s3.S3Configuration;
-import software.amazon.awssdk.services.s3.model.*;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.utils.AttributeMap;
 
 @Slf4j
 public class S3Transport extends Transport {
-  private static final String FILENAME_FORMAT_FOR_DIRECTORY_PREFIX = "%s%s.json";
-  private static final String FILENAME_FORMAT_FOR_FILE_PREFIX = "%s_%s.json";
-
   private final S3Client s3Client;
   private final S3TransportConfig config;
 
@@ -68,44 +68,45 @@ public class S3Transport extends Transport {
   }
 
   private <T extends OpenLineage.BaseEvent> void emitEvent(T event) {
-    Long timestamp = event.getEventTime().toInstant().toEpochMilli();
-    uploadObject(getFileName(timestamp), OpenLineageClientUtils.toJson(event));
+    // eventTime alone is not unique: several events can share the same millisecond, so a hash of
+    // the event content is appended. Only identical events share a name. Names still sort by
+    // eventTime.
+    byte[] content = OpenLineageClientUtils.toJson(event).getBytes(StandardCharsets.UTF_8);
+    String baseName =
+        String.format(
+            "%d-%s.json", event.getEventTime().toInstant().toEpochMilli(), contentHash(content));
+    uploadObject(getFileName(baseName), content);
   }
 
-  private String getFileName(Long timestamp) {
-    if (config.getFileNamePrefix() != null) {
-      String prefix = config.getFileNamePrefix();
-      return prefix.endsWith("/")
-          ? String.format(FILENAME_FORMAT_FOR_DIRECTORY_PREFIX, prefix, timestamp)
-          : String.format(FILENAME_FORMAT_FOR_FILE_PREFIX, prefix, timestamp);
-    } else {
-      return timestamp + ".json";
+  /** Returns the first 64 bits of the SHA-256 of {@code content} as 16 hex characters. */
+  private static String contentHash(byte[] content) {
+    try {
+      byte[] digest = MessageDigest.getInstance("SHA-256").digest(content);
+      return String.format("%016x", ByteBuffer.wrap(digest).getLong());
+    } catch (NoSuchAlgorithmException e) {
+      throw new OpenLineageClientException(e);
     }
   }
 
-  private void uploadObject(String objectName, String contents) {
+  private String getFileName(String baseName) {
+    String prefix = config.getFileNamePrefix();
+    if (prefix == null) {
+      return baseName;
+    }
+    return prefix.endsWith("/")
+        ? String.format("%s%s", prefix, baseName)
+        : String.format("%s_%s", prefix, baseName);
+  }
+
+  // No existence check: the key depends on the event content, so an existing key holds the same
+  // bytes and overwriting it loses nothing.
+  private void uploadObject(String objectName, byte[] content) {
     String bucketName = config.getBucketName();
     log.debug("Attempting to upload event to bucket: {} with key: {}", bucketName, objectName);
-    // We don't want to overwrite the files
-    if (objectExists(bucketName, objectName)) {
-      String error =
-          String.format("File with given name s3://%s/%s, already exists!", bucketName, objectName);
-      throw new OpenLineageClientException(error);
-    }
     s3Client.putObject(
         PutObjectRequest.builder().bucket(bucketName).key(objectName).build(),
-        RequestBody.fromBytes(contents.getBytes(StandardCharsets.UTF_8)));
+        RequestBody.fromBytes(content));
     log.debug("Stored event: {}/{}", bucketName, objectName);
-  }
-
-  private boolean objectExists(String bucketName, String objectName) {
-    try {
-      // Try to retrieve the metadata from an object without returning the object itself.
-      s3Client.headObject(HeadObjectRequest.builder().bucket(bucketName).key(objectName).build());
-      return true;
-    } catch (NoSuchKeyException e) {
-      return false;
-    }
   }
 
   public void close() {
