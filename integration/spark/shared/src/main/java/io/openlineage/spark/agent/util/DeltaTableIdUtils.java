@@ -5,7 +5,9 @@
 
 package io.openlineage.spark.agent.util;
 
+import io.openlineage.client.utils.OneLakeLocation;
 import java.util.Optional;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.reflect.MethodUtils;
 
@@ -57,7 +59,14 @@ public final class DeltaTableIdUtils {
         .filter(s -> invoke(s, "version").map(v -> ((Number) v).longValue() >= 0).orElse(false))
         .flatMap(s -> invoke(s, "metadata"))
         .flatMap(metadata -> invoke(metadata, "id"))
-        .map(Object::toString);
+        .map(Object::toString)
+        .map(DeltaTableIdUtils::normalize);
+  }
+
+  // Fabric warehouses write their table IDs in upper case and Spark in lower case; the same ID
+  // must always be written the same way
+  private static String normalize(String id) {
+    return OneLakeLocation.guid(id).map(UUID::toString).orElse(id);
   }
 
   private static Optional<Object> invoke(Object target, String method) {
