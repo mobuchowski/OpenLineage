@@ -4,6 +4,8 @@
 
 ### Added
 
+* **Spark: Name Microsoft Fabric lakehouse tables** [`#PR2`](https://github.com/OpenLineage/OpenLineage/pull/PR2) [@mobuchowski](https://github.com/mobuchowski)
+  *Lakehouse tables are named `fabric-lakehouse://<workspace ID>` / `<lakehouse>.<schema>.<table>` when Spark knows the workspace, the lakehouse's name and that the item is a lakehouse: Delta writes under `Tables/`, the notebook's default lakehouse, Fabric's catalog, and `<name>.Lakehouse` paths in the notebook's workspace. Other OneLake paths are written the same way every time. All of them get the `oneLake` facet, with the Delta table ID when the snapshot is loaded. Relative Delta paths such as `.save("Tables/t")` are now reported where they are written instead of as `file`, and in Fabric, catalog tables no longer get a `TABLE` symlink in the session's own folder.*
 * **Spec: Add the `oneLake` dataset facet** [`#PR1`](https://github.com/OpenLineage/OpenLineage/pull/PR1) [@mobuchowski](https://github.com/mobuchowski)
   *A new dataset facet describes where a table is stored in OneLake, Microsoft Fabric's storage: the workspace and item (such as a lakehouse or a warehouse) that hold it, by ID and name, the item's type, the table's OneLake location written with IDs, and its Delta table ID. Spark adds it to Fabric warehouse tables. The Java, Python and Go clients include the new facet.*
 * **Spark: Report Microsoft Fabric warehouse tables read and written with `synapsesql`** [`#5132`](https://github.com/OpenLineage/OpenLineage/pull/5132) [@mobuchowski](https://github.com/mobuchowski)

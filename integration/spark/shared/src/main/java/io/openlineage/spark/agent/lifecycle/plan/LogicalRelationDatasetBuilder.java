@@ -14,6 +14,7 @@ import io.openlineage.client.utils.DatasetIdentifier;
 import io.openlineage.spark.agent.lifecycle.plan.handlers.ExtensionLineageRelationHandler;
 import io.openlineage.spark.agent.lifecycle.plan.handlers.JdbcRelationHandler;
 import io.openlineage.spark.agent.util.DatasetVersionUtils;
+import io.openlineage.spark.agent.util.DeltaTableIdUtils;
 import io.openlineage.spark.agent.util.PathUtils;
 import io.openlineage.spark.agent.util.PlanUtils;
 import io.openlineage.spark.agent.util.ScalaConversionUtils;
@@ -141,6 +142,7 @@ public class LogicalRelationDatasetBuilder<D extends OpenLineage.Dataset>
 
     SparkDatasetBuilder<D> sparkBuilder =
         datasetFactory.sparkDatasetBuilder().dataset(di).schema(logRel.schema());
+    sparkBuilder.oneLakeTableId(() -> deltaTableId(logRel.relation()));
     DatasetCompositeFacetsBuilder datasetFacetsBuilder = sparkBuilder.getInner();
 
     if (!isFacetDisabled(context, "inputStatistics")) {
@@ -274,6 +276,7 @@ public class LogicalRelationDatasetBuilder<D extends OpenLineage.Dataset>
       Optional<OpenLineage.InputStatisticsInputDatasetFacet> inputStats) {
     SparkDatasetBuilder<D> b =
         datasetFactory.sparkDatasetBuilder().dataset(uri).schema(relation.schema());
+    b.oneLakeTableId(() -> deltaTableId(relation));
     datasetVersion.ifPresent(b::version);
     inputStats.ifPresent(s -> b.getInner().getInputFacets().inputStatistics(s));
     return b.build();
@@ -291,6 +294,13 @@ public class LogicalRelationDatasetBuilder<D extends OpenLineage.Dataset>
     } catch (IOException e) {
       return false;
     }
+  }
+
+  private static Optional<String> deltaTableId(BaseRelation relation) {
+    if (!(relation instanceof HadoopFsRelation)) {
+      return Optional.empty();
+    }
+    return DeltaTableIdUtils.fromFileIndex(((HadoopFsRelation) relation).location());
   }
 
   protected Optional<String> getDatasetVersion(LogicalRelation x) {

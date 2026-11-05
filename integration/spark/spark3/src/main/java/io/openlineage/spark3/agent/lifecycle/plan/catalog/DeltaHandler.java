@@ -9,11 +9,14 @@ import io.openlineage.client.OpenLineage;
 import io.openlineage.client.utils.DatasetIdentifier;
 import io.openlineage.client.utils.DatasetIdentifier.SymlinkType;
 import io.openlineage.spark.agent.lifecycle.plan.catalog.CatalogHandler;
+import io.openlineage.spark.agent.util.FabricLakehouseSparkUtils;
+import io.openlineage.spark.agent.util.FabricWarehouseSparkUtils;
 import io.openlineage.spark.agent.util.PathUtils;
 import io.openlineage.spark.agent.util.ScalaConversionUtils;
 import io.openlineage.spark.api.OpenLineageContext;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hadoop.fs.Path;
@@ -78,14 +81,27 @@ public class DeltaHandler implements CatalogHandler {
 
       if (catalogTable.isDefined()) {
         return PathUtils.fromCatalogTable(catalogTable.get(), session);
-      } else {
-        return PathUtils.fromPath(deltaTable.path())
-            .withSymlink(
-                identifier.toString(),
-                Optional.ofNullable(sparkRuntimeConfig.get("spark.sql.warehouse.dir"))
-                    .orElse(tableCatalog.name()),
-                SymlinkType.TABLE);
       }
+      Function<String, Optional<String>> conf = FabricWarehouseSparkUtils.confOf(session);
+      if (FabricLakehouseSparkUtils.isFabric(conf)) {
+        // In Microsoft Fabric, spark.sql.warehouse.dir is a folder created for each session, so
+        // a symlink in it would give the table a new name every time. The catalog name is used
+        // to name the lakehouse instead.
+        return FabricLakehouseSparkUtils.withCatalogTable(
+            PathUtils.fromPath(deltaTable.path()),
+            conf,
+            identifier.namespace().length == 1
+                ? Optional.of(identifier.namespace()[0])
+                : Optional.empty(),
+            identifier.name(),
+            true);
+      }
+      return PathUtils.fromPath(deltaTable.path())
+          .withSymlink(
+              identifier.toString(),
+              Optional.ofNullable(sparkRuntimeConfig.get("spark.sql.warehouse.dir"))
+                  .orElse(tableCatalog.name()),
+              SymlinkType.TABLE);
     }
 
     // not a Delta table, fallback to SparkCatalog. See:
