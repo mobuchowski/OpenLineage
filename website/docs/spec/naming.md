@@ -95,8 +95,9 @@ If you know the lakehouse's ID, also add the table's OneLake file location as a 
 `abfss://{workspace id}@onelake.dfs.fabric.microsoft.com` with name `{lakehouse id}/Tables/{schema}/{table}`, or
 `{lakehouse id}/Tables/{table}` for a lakehouse without schemas.
 
-For Fabric warehouses and lakehouses, the [`fabric_onelake` facet](facets/dataset-facets/onelake.md) can describe the workspace
-and item that hold the table, with their IDs and names.
+For Fabric warehouses and lakehouses, the
+[`fabric_onelake` facet](../integrations/spark/microsoft_fabric.md#the-fabric_onelake-facet) can describe the
+workspace and item that hold the table, with their IDs and names.
 
 ## Job Naming
 
