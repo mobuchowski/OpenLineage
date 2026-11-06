@@ -65,7 +65,15 @@ public class PathUtils {
               "gcp_lakehouse",
               DatasetIdentifier.SymlinkType.TABLE);
     }
-    return fromTableIdentifier(catalogTable.identifier(), sparkContext, location);
+    DatasetIdentifier identifier =
+        fromTableIdentifier(catalogTable.identifier(), sparkContext, location);
+    // In Microsoft Fabric, the catalog name tells which lakehouse the table is in
+    return FabricLakehouseSparkUtils.withCatalogTable(
+        identifier,
+        FabricWarehouseSparkUtils.confOf(sparkSession),
+        ScalaConversionUtils.asJavaOptional(catalogTable.identifier().database()),
+        catalogTable.identifier().table(),
+        ScalaConversionUtils.asJavaOptional(catalogTable.provider()));
   }
 
   @SneakyThrows

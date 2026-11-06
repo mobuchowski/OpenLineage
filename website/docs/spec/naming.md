@@ -24,6 +24,7 @@ A dataset, or `table`, is organized according to a producer, namespace, database
 | BigQuery                      | Warehouse                            | `bigquery`                                                                                                                         | `{project id}.{dataset name}.{table name}`                                   |
 | Cassandra                     | Warehouse                            | `cassandra://{host}:{port}`                                                                                                        | `{keyspace}.{table}`                                                         |
 | Milvus                        | Vector database                      | `milvus://{host}:{port}`                                                                                                            | `{database}.{collection}`                                                         |
+| Microsoft Fabric Lakehouse    | Lakehouse                            | `fabric-lakehouse://{workspace id}`                                                                                                | `{lakehouse}.{schema}.{table}`                                               |
 | Microsoft Fabric Warehouse    | Warehouse                            | `fabric-warehouse://{sql analytics endpoint}` or `fabric-warehouse://{sql analytics endpoint}:{port}`                              | `{database}.{schema}.{table}`                                                |
 | MySQL                         | Warehouse                            | `mysql://{host}:{port}`                                                                                                            | `{database}.{table}`                                                         |
 | CrateDB                       | Warehouse                            | `crate://{host}:{port}`                                                                                                            | `{database}.{schema}.{table}`                                                |
@@ -63,9 +64,9 @@ Using the legacy Snowflake account locator format (that will create `snowflake:/
 but it forces dataset IDs that won’t match IDs created with the orgname-account_name format.
 If you switch formats later, existing lineage nodes won’t connect to new ones.
 
-For Microsoft Fabric Warehouse, each workspace has one SQL address, shared by all its warehouses and lakehouses;
-`{database}` is the warehouse or lakehouse name. The same address can be written in several ways, so to make sure
-every tool reports a table under the same name, write the address:
+For Microsoft Fabric Warehouse, each workspace has one SQL address, shared by all its warehouses; `{database}` is the
+warehouse name. The same address can be written in several ways, so to make sure every tool reports a table under the
+same name, write the address:
 - in lowercase;
 - without the `.z{xx}` label that Fabric sometimes adds before `.datawarehouse.fabric.microsoft.com`;
 - without port 1433, the default.
@@ -79,6 +80,23 @@ Microsoft's .NET stores them, written in lowercase base32 without `=` padding. M
 
 If you know the warehouse's ID, also add the table's OneLake file location as a `LOCATION` symlink, using IDs only:
 `abfss://{workspace id}@onelake.dfs.fabric.microsoft.com` with name `{warehouse id}/Tables/{schema}/{table}`.
+
+For Microsoft Fabric Lakehouse, `{workspace id}` is the ID of the workspace that holds the lakehouse, in lowercase.
+Lakehouses created without schemas keep their tables directly in `Tables/`; use the schema `dbo` for them, as Fabric
+does in SQL. For example, the table in `Tables/sales/orders` of lakehouse `lh_sales` is
+`fabric-lakehouse://d1f6473b-9f7a-4352-940b-a8d74461d3fc` / `lh_sales.sales.orders`.
+
+Name a table this way only when you know the workspace ID, the lakehouse's name, and that the item is a lakehouse.
+A OneLake path alone doesn't say whether an item is a lakehouse or a warehouse. When you don't know all three, name the
+table after its OneLake path, written with IDs when you know them:
+`abfss://{workspace id}@onelake.dfs.fabric.microsoft.com` / `{item id}/Tables/{schema}/{table}`.
+
+If you know the lakehouse's ID, also add the table's OneLake file location as a `LOCATION` symlink, using IDs only:
+`abfss://{workspace id}@onelake.dfs.fabric.microsoft.com` with name `{lakehouse id}/Tables/{schema}/{table}`, or
+`{lakehouse id}/Tables/{table}` for a lakehouse without schemas.
+
+For Fabric warehouses and lakehouses, the [`fabric_onelake` facet](facets/dataset-facets/onelake.md) can describe the workspace
+and item that hold the table, with their IDs and names.
 
 ## Job Naming
 

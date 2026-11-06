@@ -292,6 +292,16 @@ public class OpenLineageContext {
 
   @Setter Integer activeJobId;
 
+  /**
+   * Type of the event whose datasets are being built. Set when an event starts being built, so that
+   * dataset builders can tell whether the run has completed.
+   */
+  @Setter OpenLineage.RunEvent.EventType eventType;
+
+  public Optional<OpenLineage.RunEvent.EventType> getEventType() {
+    return Optional.ofNullable(eventType);
+  }
+
   public Optional<Integer> getActiveJobId() {
     return Optional.ofNullable(activeJobId);
   }

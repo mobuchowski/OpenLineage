@@ -16,14 +16,20 @@ import io.openlineage.client.OpenLineage.SymlinksDatasetFacet;
 import io.openlineage.client.dataset.DatasetCompositeFacetsBuilder;
 import io.openlineage.client.dataset.namespace.resolver.DatasetNamespaceCombinedResolver;
 import io.openlineage.client.utils.DatasetIdentifier;
+import io.openlineage.client.utils.OneLakeLocation;
 import io.openlineage.spark.agent.util.CatalogDatasetFacetUtils;
 import io.openlineage.spark.agent.util.DatasetIdentityFacetUtils;
 import io.openlineage.spark.agent.util.DatasetVersionUtils;
+import io.openlineage.spark.agent.util.FabricLakehouseSparkUtils;
+import io.openlineage.spark.agent.util.FabricWarehouseSparkUtils;
 import io.openlineage.spark.agent.util.PathUtils;
 import io.openlineage.spark.agent.util.PlanUtils;
 import java.net.URI;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.Getter;
 import org.apache.spark.sql.catalyst.TableIdentifier;
@@ -54,6 +60,18 @@ public abstract class SparkDatasetBuilder<T extends OpenLineage.Dataset> {
   /** Symlinks of the dataset, kept to describe it in facets derived from its identity. */
   protected List<DatasetIdentifier.Symlink> identifierSymlinks = Collections.emptyList();
 
+  /** The identifier as given to {@link #dataset(DatasetIdentifier)}, before Fabric naming. */
+  protected DatasetIdentifier rawIdentifier;
+
+  /** Whether the dataset is written as a Delta table; see {@link #deltaTable()}. */
+  protected boolean deltaTableWrite;
+
+  /** What is known about the dataset's location in Microsoft Fabric's OneLake, if it is there. */
+  protected Optional<OneLakeLocation> oneLakeLocation = Optional.empty();
+
+  /** Looks up the table's Delta table ID, for the {@code fabric_onelake} facet. */
+  protected Supplier<Optional<String>> oneLakeTableIdLookup = Optional::empty;
+
   public SparkDatasetBuilder(OpenLineageContext context) {
     this(context, new DatasetCompositeFacetsBuilder(context.getOpenLineage()));
   }
@@ -65,11 +83,59 @@ public abstract class SparkDatasetBuilder<T extends OpenLineage.Dataset> {
   }
 
   public SparkDatasetBuilder<T> dataset(DatasetIdentifier datasetIdentifier) {
-    this.name = datasetIdentifier.getName();
-    this.namespace = datasetIdentifier.getNamespace();
-    dataSource(datasetIdentifier.getNamespace());
-    symlink(datasetIdentifier.getSymlinks());
+    this.rawIdentifier = datasetIdentifier;
+    return applyIdentity();
+  }
+
+  /**
+   * Marks the dataset as a Delta table being written. For a table in Microsoft Fabric's OneLake,
+   * this shows that the item it is written to is a lakehouse; see {@link
+   * FabricLakehouseSparkUtils}.
+   */
+  public SparkDatasetBuilder<T> deltaTable() {
+    this.deltaTableWrite = true;
+    return rawIdentifier == null ? this : applyIdentity();
+  }
+
+  /**
+   * Sets how to look up the table's Delta table ID ({@code metaData.id}) for the {@code
+   * fabric_onelake} facet. It is only looked up for datasets stored in OneLake.
+   */
+  public SparkDatasetBuilder<T> oneLakeTableId(Supplier<Optional<String>> tableId) {
+    this.oneLakeTableIdLookup = tableId;
     return this;
+  }
+
+  /** Whether this builder builds datasets that are written. */
+  protected boolean isOutput() {
+    return false;
+  }
+
+  private SparkDatasetBuilder<T> applyIdentity() {
+    // a write is only known to have succeeded once the run completes
+    boolean completedOutput =
+        isOutput()
+            && context
+                .getEventType()
+                .filter(OpenLineage.RunEvent.EventType.COMPLETE::equals)
+                .isPresent();
+    FabricLakehouseSparkUtils.Resolved resolved =
+        FabricLakehouseSparkUtils.resolve(
+            rawIdentifier, completedOutput, deltaTableWrite, sparkConf());
+    DatasetIdentifier identifier = resolved.getIdentifier();
+    this.name = identifier.getName();
+    this.namespace = identifier.getNamespace();
+    this.oneLakeLocation = resolved.getOneLake();
+    dataSource(identifier.getNamespace());
+    symlink(identifier.getSymlinks());
+    return this;
+  }
+
+  private Function<String, Optional<String>> sparkConf() {
+    return context
+        .getSparkSession()
+        .map(FabricWarehouseSparkUtils::confOf)
+        .orElse(key -> Optional.empty());
   }
 
   public SparkDatasetBuilder<T> dataset(String name, String namespace) {
@@ -226,7 +292,11 @@ public abstract class SparkDatasetBuilder<T extends OpenLineage.Dataset> {
       return;
     }
     DatasetIdentityFacetUtils.buildIdentityFacets(
-        context, inner, new DatasetIdentifier(name, namespace, identifierSymlinks));
+        context,
+        inner,
+        new DatasetIdentifier(name, namespace, identifierSymlinks),
+        oneLakeLocation,
+        oneLakeTableIdLookup);
   }
 
   public abstract T build();

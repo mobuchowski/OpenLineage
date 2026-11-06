@@ -20,6 +20,11 @@ public class SparkOutputDatasetBuilder extends SparkDatasetBuilder<OpenLineage.O
     super(context, inner);
   }
 
+  @Override
+  protected boolean isOutput() {
+    return true;
+  }
+
   /** Overrides to also trigger vendor-specific output facet builders (e.g. Iceberg). */
   @Override
   public SparkDatasetBuilder<OpenLineage.OutputDataset> version(String version) {

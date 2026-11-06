@@ -21,6 +21,7 @@ import io.openlineage.spark.api.DatasetFactory;
 import io.openlineage.spark.api.OpenLineageContext;
 import io.openlineage.spark.api.SparkOpenLineageConfig;
 import io.openlineage.sql.DbTableMeta;
+import java.net.URI;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -71,6 +72,27 @@ class OneLakeFacetUtilsTest {
             .openLineageConfig(config)
             .sparkExtensionVisitorWrapper(new SparkOpenLineageExtensionVisitorWrapper(config))
             .build();
+  }
+
+  @Test
+  void testDeltaWriteOnlyShowsALakehouseOnComplete() {
+    // a Delta write under Tables/ shows the item is a lakehouse, but only once it has succeeded
+    URI path =
+        URI.create(
+            "abfss://"
+                + WORKSPACE
+                + "@onelake.dfs.fabric.microsoft.com/c7a14054-60a7-4121-8fb7-252d16f687eb"
+                + "/Tables/sales/orders");
+
+    context.setEventType(OpenLineage.RunEvent.EventType.START);
+    OpenLineage.OutputDataset started =
+        DatasetFactory.output(context).sparkDatasetBuilder().dataset(path).deltaTable().build();
+    context.setEventType(OpenLineage.RunEvent.EventType.COMPLETE);
+    OpenLineage.OutputDataset completed =
+        DatasetFactory.output(context).sparkDatasetBuilder().dataset(path).deltaTable().build();
+
+    assertThat(started.getFacets().getFabric_onelake().getItemType()).isNull();
+    assertThat(completed.getFacets().getFabric_onelake().getItemType()).isEqualTo("Lakehouse");
   }
 
   @Test

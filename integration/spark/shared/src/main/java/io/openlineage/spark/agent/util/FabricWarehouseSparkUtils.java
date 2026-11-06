@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.spark.sql.SparkSession;
 
@@ -124,16 +125,33 @@ public final class FabricWarehouseSparkUtils {
    */
   public static Function<String, Optional<String>> confOf(SparkSession session) {
     return key -> {
-      Optional<String> value = ScalaConversionUtils.asJavaOptional(session.conf().getOption(key));
+      Optional<String> value =
+          lookup(() -> ScalaConversionUtils.asJavaOptional(session.conf().getOption(key)));
       if (value.isPresent()) {
         return value;
       }
-      value = ScalaConversionUtils.asJavaOptional(session.sparkContext().getConf().getOption(key));
+      value =
+          lookup(
+              () ->
+                  ScalaConversionUtils.asJavaOptional(
+                      session.sparkContext().getConf().getOption(key)));
       if (value.isPresent()) {
         return value;
       }
-      return Optional.ofNullable(session.sparkContext().hadoopConfiguration().get(key));
+      return lookup(
+          () -> Optional.ofNullable(session.sparkContext().hadoopConfiguration().get(key)));
     };
+  }
+
+  // A setting that can't be read, for example because the session is stopping, counts as unset
+  private static Optional<String> lookup(Supplier<Optional<String>> source) {
+    try {
+      Optional<String> value = source.get();
+      return value == null ? Optional.empty() : value;
+    } catch (RuntimeException e) {
+      log.debug("Cannot read a Spark setting", e);
+      return Optional.empty();
+    }
   }
 
   private static Optional<String> buildEndpoint(

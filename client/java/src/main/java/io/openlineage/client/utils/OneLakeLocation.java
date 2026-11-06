@@ -6,6 +6,9 @@
 package io.openlineage.client.utils;
 
 import io.openlineage.client.OpenLineage;
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -24,17 +27,28 @@ import lombok.Value;
  * fabric_onelake} dataset facet built from it.
  *
  * <p>OneLake paths have the form {@code
- * abfss://<workspace>@onelake.dfs.fabric.microsoft.com/<item>/<section>/...}, where the section is
- * {@code Tables} or {@code Files}. This class reads the form written with IDs, {@code
- * d1f6473b-...@onelake.dfs.fabric.microsoft.com/c7a14054-.../Tables/sales/orders}. Every field is
- * optional: each producer sets only what it knows locally, without calling Fabric.
+ * abfss://<workspace>@onelake.dfs.fabric.microsoft.com/<item>/ <section>/...}, where the section is
+ * {@code Tables} or {@code Files}. The workspace and the item can each be written in two ways:
+ *
+ * <ul>
+ *   <li>by ID: {@code
+ *       d1f6473b-...@onelake.dfs.fabric.microsoft.com/c7a14054-.../Tables/sales/orders}
+ *   <li>by name, with the item's type after a dot: {@code
+ *       sales-ws@onelake.dfs.fabric.microsoft.com/lh_sales.Lakehouse/Tables/sales/orders}
+ * </ul>
+ *
+ * OneLake refuses paths that mix the two. Names can be URL-encoded in paths, such as {@code
+ * Sales%20Team}; they are kept decoded here, as Fabric shows them. Every field is optional: each
+ * producer sets only what it knows locally, without calling Fabric.
  */
 @Value
 @Builder(toBuilder = true)
 public class OneLakeLocation {
   public static final String HOST = "onelake.dfs.fabric.microsoft.com";
+  public static final String LAKEHOUSE = "Lakehouse";
   public static final String WAREHOUSE = "Warehouse";
   public static final String TABLES = "Tables";
+  private static final String SPARK_WAREHOUSE_SUFFIX = "Datawarehouse";
 
   // The global host, the blob host and regional hosts such as westus-onelake.dfs.fabric...
   private static final Pattern HOST_PATTERN =
@@ -58,10 +72,10 @@ public class OneLakeLocation {
   String tableId;
 
   /**
-   * Reads a OneLake location written with IDs from a dataset's namespace and name, such as {@code
-   * abfss://<workspace ID>@onelake.dfs.fabric.microsoft.com} and {@code <item ID>/Tables/<table>}.
+   * Reads a OneLake location from a dataset's namespace and name, such as {@code
+   * abfss://<workspace>@onelake.dfs.fabric.microsoft.com} and {@code <item>/Tables/<table>}.
    *
-   * @return the location, or empty if this isn't a OneLake path that names an item by ID
+   * @return the location, or empty if this isn't a OneLake path that names an item
    */
   public static Optional<OneLakeLocation> parse(String namespace, String name) {
     if (namespace == null || name == null) {
@@ -103,9 +117,28 @@ public class OneLakeLocation {
       return Optional.empty();
     }
 
-    Optional<UUID> workspaceId = guid(container);
-    Optional<UUID> itemId = guid(segments.get(0));
-    if (!workspaceId.isPresent() || !itemId.isPresent()) {
+    OneLakeLocationBuilder builder = OneLakeLocation.builder();
+    Optional<UUID> workspaceGuid = guid(container);
+    if (workspaceGuid.isPresent()) {
+      builder.workspaceId(workspaceGuid.get());
+    } else {
+      builder.workspaceName(decode(container));
+    }
+
+    String item = segments.get(0);
+    Optional<UUID> itemGuid = guid(item);
+    if (itemGuid.isPresent()) {
+      builder.itemId(itemGuid.get());
+    } else {
+      int dot = item.lastIndexOf('.');
+      if (dot <= 0 || dot == item.length() - 1) {
+        // OneLake rejects a bare item name; this isn't a path it would accept
+        return Optional.empty();
+      }
+      builder.itemName(decode(item.substring(0, dot))).itemType(itemType(item.substring(dot + 1)));
+    }
+    if (workspaceGuid.isPresent() != itemGuid.isPresent()) {
+      // OneLake rejects paths that mix IDs and names
       return Optional.empty();
     }
 
@@ -113,12 +146,7 @@ public class OneLakeLocation {
     if (!path.isEmpty() && TABLES.equalsIgnoreCase(path.get(0))) {
       path.set(0, TABLES);
     }
-    return Optional.of(
-        OneLakeLocation.builder()
-            .workspaceId(workspaceId.get())
-            .itemId(itemId.get())
-            .path(Collections.unmodifiableList(path))
-            .build());
+    return Optional.of(builder.path(Collections.unmodifiableList(path)).build());
   }
 
   /** Reads an ID, returning empty instead of failing when the text isn't one. */
@@ -127,6 +155,28 @@ public class OneLakeLocation {
       return Optional.empty();
     }
     return Optional.of(UUID.fromString(value.trim()));
+  }
+
+  /**
+   * Fabric's name for an item type written as a path suffix. Spark sometimes reports warehouses as
+   * {@code .Datawarehouse}, while OneLake's own APIs use {@code .Warehouse}.
+   */
+  static String itemType(String suffix) {
+    if (LAKEHOUSE.equalsIgnoreCase(suffix)) {
+      return LAKEHOUSE;
+    }
+    if (WAREHOUSE.equalsIgnoreCase(suffix) || SPARK_WAREHOUSE_SUFFIX.equalsIgnoreCase(suffix)) {
+      return WAREHOUSE;
+    }
+    return suffix;
+  }
+
+  /** The table's segments after {@code Tables/}: {@code [schema, table]} or {@code [table]}. */
+  public Optional<List<String>> tableParts() {
+    if (path.size() < 2 || path.size() > 3 || !TABLES.equals(path.get(0))) {
+      return Optional.empty();
+    }
+    return Optional.of(path.subList(1, path.size()));
   }
 
   /**
@@ -140,12 +190,26 @@ public class OneLakeLocation {
     if (workspaceId == null || itemId == null || path.isEmpty()) {
       return Optional.empty();
     }
-    StringBuilder name = new StringBuilder(itemId.toString());
-    for (String segment : path) {
-      name.append('/').append(segment);
+    return Optional.of(identifier(workspaceId.toString(), itemId.toString()));
+  }
+
+  /**
+   * The location written the standard way: with IDs if both are known, otherwise with names. The
+   * host is always {@code onelake.dfs.fabric.microsoft.com}, IDs are lowercase, item types use
+   * Fabric's names, and names are URL-encoded the same way every time.
+   *
+   * @return the identifier, or empty if neither form can be written or there's no path after the
+   *     item
+   */
+  public Optional<DatasetIdentifier> canonicalIdentifier() {
+    Optional<DatasetIdentifier> byId = guidIdentifier();
+    if (byId.isPresent()) {
+      return byId;
     }
-    return Optional.of(
-        new DatasetIdentifier(name.toString(), "abfss://" + workspaceId + "@" + HOST));
+    if (workspaceName == null || itemName == null || itemType == null || path.isEmpty()) {
+      return Optional.empty();
+    }
+    return Optional.of(identifier(encode(workspaceName), encode(itemName) + "." + itemType));
   }
 
   /** {@link #guidIdentifier()} as a single path. */
@@ -168,5 +232,35 @@ public class OneLakeLocation {
         .itemType(itemType)
         .tableId(tableId == null ? null : tableId.toLowerCase(Locale.ROOT))
         .build();
+  }
+
+  private DatasetIdentifier identifier(String container, String item) {
+    StringBuilder name = new StringBuilder(item);
+    for (String segment : path) {
+      name.append('/').append(segment);
+    }
+    return new DatasetIdentifier(name.toString(), "abfss://" + container + "@" + HOST);
+  }
+
+  /** Decodes a URL-encoded name; a name that isn't validly encoded is kept as it is. */
+  private static String decode(String name) {
+    if (name.indexOf('%') < 0) {
+      return name;
+    }
+    try {
+      // URLDecoder would also turn '+' into a space, which paths don't do
+      return URLDecoder.decode(name.replace("+", "%2B"), "UTF-8");
+    } catch (IllegalArgumentException | UnsupportedEncodingException e) {
+      return name;
+    }
+  }
+
+  /** URL-encodes a name for a path, with {@code %20} for spaces. */
+  private static String encode(String name) {
+    try {
+      return URLEncoder.encode(name, "UTF-8").replace("+", "%20");
+    } catch (UnsupportedEncodingException e) {
+      return name;
+    }
   }
 }

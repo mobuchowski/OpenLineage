@@ -23,6 +23,7 @@ import io.openlineage.spark.api.AbstractQueryPlanDatasetBuilder;
 import io.openlineage.spark.api.JobNameSuffixProvider;
 import io.openlineage.spark.api.OpenLineageContext;
 import io.openlineage.spark.api.SparkDatasetBuilder;
+import java.io.IOException;
 import java.net.URI;
 import java.sql.SQLException;
 import java.util.Collections;
@@ -32,6 +33,8 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 import org.apache.spark.scheduler.SparkListenerEvent;
 import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.SaveMode;
@@ -150,7 +153,8 @@ public class SaveIntoDataSourceCommandVisitor
         SparkDatasetBuilder<OutputDataset> builder =
             outputDataset()
                 .sparkDatasetBuilder()
-                .dataset(URI.create(command.options().get("path").get()))
+                .dataset(qualifiedPath(command))
+                .deltaTable()
                 .schema(schema);
         lifecycleStateChange.ifPresent(builder::lifecycleStateChange);
         return Collections.singletonList(builder.build());
@@ -297,5 +301,31 @@ public class SaveIntoDataSourceCommandVisitor
     }
 
     return Optional.empty();
+  }
+
+  /**
+   * The path being written, qualified against the session's file system like Delta itself does, so
+   * that a relative path such as {@code Tables/orders} is reported where it is written. In
+   * Microsoft Fabric, relative paths are in the session's default lakehouse.
+   */
+  private URI qualifiedPath(SaveIntoDataSourceCommand command) {
+    String path = command.options().get("path").get();
+    URI uri = URI.create(path);
+    if (uri.getScheme() != null || !context.getSparkSession().isPresent()) {
+      return uri;
+    }
+    try {
+      Path hadoopPath = new Path(path);
+      Configuration hadoopConf =
+          context
+              .getSparkSession()
+              .get()
+              .sessionState()
+              .newHadoopConfWithOptions(command.options());
+      return hadoopPath.getFileSystem(hadoopConf).makeQualified(hadoopPath).toUri();
+    } catch (IOException | RuntimeException e) {
+      log.debug("Cannot qualify the path {}", path, e);
+      return uri;
+    }
   }
 }

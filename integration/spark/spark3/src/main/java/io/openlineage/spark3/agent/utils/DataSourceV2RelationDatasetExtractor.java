@@ -14,9 +14,11 @@ import io.openlineage.spark.agent.lifecycle.plan.catalog.CatalogUtils;
 import io.openlineage.spark.agent.lifecycle.plan.catalog.RelationHandler;
 import io.openlineage.spark.agent.lifecycle.plan.catalog.UnsupportedCatalogException;
 import io.openlineage.spark.agent.util.DatabricksUtils;
+import io.openlineage.spark.agent.util.DeltaTableIdUtils;
 import io.openlineage.spark.agent.util.PlanUtils;
 import io.openlineage.spark.api.DatasetFactory;
 import io.openlineage.spark.api.OpenLineageContext;
+import io.openlineage.spark.api.SparkDatasetBuilder;
 import io.openlineage.sql.OpenLineageSql;
 import io.openlineage.sql.SqlMeta;
 import java.util.Collections;
@@ -104,10 +106,10 @@ public class DataSourceV2RelationDatasetExtractor {
                   .schema(PlanUtils.schemaFacet(openLineage, relation.schema()))
                   .dataSource(PlanUtils.datasourceFacet(openLineage, identifier.getNamespace()));
 
-              return datasetFactory
-                  .sparkDatasetBuilder(datasetFacetsBuilder)
-                  .dataset(identifier)
-                  .build();
+              SparkDatasetBuilder<D> builder =
+                  datasetFactory.sparkDatasetBuilder(datasetFacetsBuilder).dataset(identifier);
+              builder.oneLakeTableId(() -> DeltaTableIdUtils.fromTable(relation.table()));
+              return builder.build();
             })
         .collect(Collectors.toList());
   }

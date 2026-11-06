@@ -17,6 +17,8 @@ import io.openlineage.client.OpenLineageClientUtils;
 import io.openlineage.client.utils.DatasetIdentifier;
 import io.openlineage.client.utils.TransformationInfo;
 import io.openlineage.spark.agent.util.DatasetReducerUtils;
+import io.openlineage.spark.agent.util.FabricLakehouseSparkUtils;
+import io.openlineage.spark.agent.util.FabricWarehouseSparkUtils;
 import io.openlineage.spark.api.ColumnLineageConfig;
 import io.openlineage.spark.api.OpenLineageContext;
 import io.openlineage.spark.api.SparkOpenLineageConfig;
@@ -84,7 +86,15 @@ public class ColumnLevelLineageBuilder {
         .get(exprId)
         .add(
             new Input(
-                DatasetReducerUtils.trimDatasetIdentifier(context, datasetIdentifier),
+                DatasetReducerUtils.trimDatasetIdentifier(
+                    context,
+                    // named like the input datasets, which are named when they are built
+                    FabricLakehouseSparkUtils.resolveInput(
+                        datasetIdentifier,
+                        context
+                            .getSparkSession()
+                            .map(FabricWarehouseSparkUtils::confOf)
+                            .orElse(key -> Optional.empty()))),
                 attributeName));
   }
 

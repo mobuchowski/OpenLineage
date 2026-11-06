@@ -7,6 +7,7 @@ package io.openlineage.spark.agent.util;
 
 import io.openlineage.client.OpenLineage;
 import io.openlineage.client.utils.DatasetIdentifier;
+import io.openlineage.client.utils.FabricLakehouseUtils;
 import io.openlineage.client.utils.FabricWarehouseUtils;
 import io.openlineage.client.utils.OneLakeLocation;
 import io.openlineage.spark.api.OpenLineageContext;
@@ -37,19 +38,46 @@ public final class OneLakeFacetUtils {
    */
   public static Optional<OpenLineage.FabricOneLakeDatasetFacet> facetFor(
       OpenLineageContext context, DatasetIdentifier identifier) {
+    return facetFor(context, identifier, Optional.empty(), Optional.empty());
+  }
+
+  /**
+   * Builds the {@code fabric_onelake} facet of a dataset.
+   *
+   * @param context the OpenLineage context, for the session's settings and the disabled facets
+   * @param identifier the dataset, with its symlinks
+   * @param known what is already known about the dataset's OneLake location, for example from
+   *     {@link FabricLakehouseSparkUtils#resolve}; if empty, it is worked out from the identifier
+   * @param tableId the table's Delta table ID, if known
+   * @return the facet, or empty if the dataset isn't stored in OneLake or the facet is disabled
+   */
+  public static Optional<OpenLineage.FabricOneLakeDatasetFacet> facetFor(
+      OpenLineageContext context,
+      DatasetIdentifier identifier,
+      Optional<OneLakeLocation> known,
+      Optional<String> tableId) {
     if (FacetUtils.isFacetDisabled(context, FACET_NAME)) {
       return Optional.empty();
     }
-    return FabricWarehouseUtils.toOneLakeLocation(identifier)
-        .map(
-            location ->
-                withWorkspaceName(
-                    location,
-                    context
-                        .getSparkSession()
-                        .map(FabricWarehouseSparkUtils::confOf)
-                        .orElse(key -> Optional.empty())))
-        .map(location -> location.toFacet(context.getOpenLineage()));
+    Optional<OneLakeLocation> location = known;
+    if (!location.isPresent()) {
+      location = FabricWarehouseUtils.toOneLakeLocation(identifier);
+    }
+    if (!location.isPresent()) {
+      location = FabricLakehouseUtils.toOneLakeLocation(identifier);
+    }
+    if (!location.isPresent()) {
+      location = OneLakeLocation.parse(identifier.getNamespace(), identifier.getName());
+    }
+    Function<String, Optional<String>> conf =
+        context
+            .getSparkSession()
+            .map(FabricWarehouseSparkUtils::confOf)
+            .orElse(key -> Optional.empty());
+    return location
+        .map(l -> withWorkspaceName(l, conf))
+        .map(l -> tableId.map(id -> l.toBuilder().tableId(id).build()).orElse(l))
+        .map(l -> l.toFacet(context.getOpenLineage()));
   }
 
   /**

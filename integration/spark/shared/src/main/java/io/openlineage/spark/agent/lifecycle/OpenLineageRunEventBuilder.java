@@ -224,6 +224,7 @@ class OpenLineageRunEventBuilder {
     OpenLineage openLineage = openLineageContext.getOpenLineage();
     List<Object> nodes = context.loadNodes(stageMap, jobMap);
     UUID runId = context.getOverwriteRunId().orElse(openLineageContext.getRunUuid());
+    openLineageContext.setEventType(context.getEventType());
 
     OpenLineage.JobFacets jobFacets =
         timeouter.timeoutJobFacets(
